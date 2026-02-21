@@ -6,7 +6,7 @@ allowed-tools: [Read, Write, Edit, Bash, Task, AskUserQuestion, Glob, Grep]
 
 # Dispatch
 
-Analyzes a ralph-specum spec's tasks.md, partitions tasks into parallelizable groups based on file ownership, and orchestrates parallel execution via Agent Teams.
+Orchestrates parallel spec execution via Agent Teams. Scripts handle parsing and partitioning; this command handles team creation and coordination.
 
 ## Parse Arguments
 
@@ -17,463 +17,188 @@ From `$ARGUMENTS`, extract:
 - **--dry-run**: Show partition plan without creating team
 - **--abort**: Cancel active dispatch, shut down teammates, clean up state
 
+If `--abort`: skip to Abort Handler section below.
+
 ## Step 1: Resolve Spec
 
 ```text
-1. If spec-name provided:
-   - Look for specs/$spec-name/tasks.md
-   - Error if not found: "Spec '$spec-name' not found. Run /ralph-specum:status to see specs."
-
-2. If no spec-name:
-   - Read specs/.current-spec to get active spec
-   - If no active spec: Error "No active spec. Provide spec name or run /ralph-specum:start first."
-
-3. Validate tasks.md exists at resolved path
-   - Error if missing: "No tasks.md found. Run /ralph-specum:tasks to generate task list."
-
-4. Read .ralph-state.json if it exists
-   - Check phase == "execution" or phase == "tasks"
-   - Warn if phase is earlier: "Spec is still in $phase phase. Consider completing spec phases first."
+1. If spec-name provided: look for specs/$spec-name/tasks.md
+2. If no spec-name: read specs/.current-spec
+3. Validate tasks.md exists
+4. Read .ralph-state.json — warn if not in execution/tasks phase
 ```
 
-## Step 2: Parse Tasks
+## Step 2: Analyze and Partition (via script)
 
-Read tasks.md and extract all incomplete tasks (lines matching `- [ ]`).
+Run the analysis script — it handles task parsing, dependency graphs, and partitioning:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/parse-and-partition.py \
+  --tasks-md specs/$specName/tasks.md \
+  --max-teammates $maxTeammates \
+  --strategy $strategy
+```
+
+**Exit codes**:
+- 0: Success — JSON partition on stdout. Save to a variable.
+- 1: tasks.md not found → "Run /ralph-specum:tasks to generate task list first."
+- 2: All complete → "All tasks complete. Nothing to dispatch."
+- 3: Single task → "Only 1 task remaining. Run /ralph-specum:implement instead."
+- 4: Circular deps → "Unresolvable circular file dependencies."
+
+## Step 3: Display Partition Plan
+
+Run with `--format` flag to get human-readable output:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/parse-and-partition.py \
+  --tasks-md specs/$specName/tasks.md \
+  --max-teammates $maxTeammates \
+  --format
+```
+
+Display the output to the user. If `--dry-run`: STOP here.
+
+## Step 4: Write Dispatch State
 
 ```text
-Task Parsing:
+1. Check specs/$specName/.dispatch-state.json:
+   - If status "dispatched": warn, set to "superseded"
+   - If status "merging": error, run /ralph-parallel:merge --abort first
+   - If "merged"/"superseded"/"aborted": OK, overwrite
 
-1. Read entire tasks.md content
-2. For each task block (starts with "- [ ] X.Y"):
-   - Extract task ID (X.Y format)
-   - Extract task description
-   - Extract **Files** list (paths that will be modified)
-   - Extract **Do** steps
-   - Extract **Verify** command
-   - Extract **Commit** message
-   - Extract markers: [P] parallel, [VERIFY] verification
-   - Store as structured task object
-
-3. Skip completed tasks (- [x])
-4. Count remaining incomplete tasks
-5. If zero incomplete: "All tasks complete. Nothing to dispatch."
+2. Write dispatch state from the partition JSON:
+   {
+     "dispatchedAt": "<ISO timestamp>",
+     "strategy": "$strategy",
+     "maxTeammates": $maxTeammates,
+     "groups": <from partition JSON>,
+     "serialTasks": <from partition JSON>,
+     "verifyTasks": <from partition JSON>,
+     "status": "dispatched",
+     "completedGroups": []
+   }
 ```
 
-### Task Object Structure
-
-```json
-{
-  "id": "1.3",
-  "description": "Add error handling",
-  "files": ["src/handler.ts", "src/utils.ts"],
-  "doSteps": ["Step 1...", "Step 2..."],
-  "verify": "npm test",
-  "commit": "feat: add error handling",
-  "markers": ["P"],
-  "phase": 1,
-  "dependencies": []
-}
-```
-
-## Step 3: Build Dependency Graph
-
-Analyze task relationships by file overlap and phase ordering.
+## Step 5: Create Team and TaskList
 
 ```text
-Dependency Analysis:
-
-1. FILE OVERLAP DETECTION:
-   For each pair of tasks (A, B) where A.id < B.id:
-   - Compute intersection of A.files and B.files
-   - If intersection is non-empty:
-     - B depends on A (lower-numbered task goes first)
-     - Record: B.dependencies.push(A.id)
-     - Record: conflictingFiles[A.id + ":" + B.id] = intersection
-
-2. PHASE ORDERING:
-   Tasks are numbered X.Y where X = phase.
-   - All tasks in phase N must complete before phase N+1 starts
-   - Within a phase, tasks with no file overlap can run in parallel
-
-3. [VERIFY] TASKS:
-   - [VERIFY] tasks are always sequential barriers
-   - They depend on ALL tasks before them in the same phase
-   - All tasks after them in the same phase depend on them
-
-4. EXPLICIT [P] MARKERS:
-   - Tasks marked [P] in tasks.md are pre-analyzed as parallel-safe
-   - Still validate via file overlap (markers may be wrong)
-   - If [P] tasks have file overlap, warn and serialize them
-```
-
-## Step 4: Partition Tasks into Groups
-
-Assign tasks to teammate groups based on file ownership.
-
-```text
-Partitioning Algorithm:
-
-1. INITIALIZE:
-   - groups = [] (up to maxTeammates groups)
-   - fileOwnership = {} (maps file path -> group index)
-
-2. SORT tasks by phase (ascending), then by ID within phase
-
-3. FOR EACH task (in order):
-   a. Check if task has unresolved dependencies
-      - If yes: defer to later (must wait for dependency group)
-
-   b. Check task's files against fileOwnership map
-      - If ALL files unowned: assign to least-loaded group, claim files
-      - If ALL files owned by SAME group: assign to that group
-      - If files split across groups: CONFLICT
-        - Option 1: Assign to group owning majority of files
-        - Option 2: Create dependency edge (task waits for prior group)
-        - Choose option that minimizes total wait time
-
-   c. Update fileOwnership for newly claimed files
-
-4. BALANCE CHECK:
-   a. Compute maxTasks = max task count across groups
-   b. Compute minTasks = min task count across groups
-   c. While maxTasks > 2 * minTasks:
-      i.   Pick the LAST task in the largest group
-      ii.  Check if its files conflict with the smallest group's ownedFiles
-      iii. If NO conflict: move task to smallest group, update fileOwnership
-      iv.  If conflict: skip this task, try previous task in largest group
-      v.   If no movable tasks found: stop (file constraints prevent balance)
-      vi.  Recompute maxTasks, minTasks
-   d. Goal: roughly equal work per teammate
-
-5. OUTPUT: Array of groups, each with:
-   - groupIndex (0-based)
-   - tasks: [task objects]
-   - ownedFiles: [file paths]
-   - dependencies: [other group indices that must complete first]
-```
-
-### Partition Result
-
-```json
-{
-  "specName": "user-auth",
-  "strategy": "file-ownership",
-  "totalTasks": 12,
-  "groups": [
-    {
-      "index": 0,
-      "name": "api-layer",
-      "tasks": ["1.1", "1.2", "1.4"],
-      "ownedFiles": ["src/api/auth.ts", "src/api/middleware.ts"],
-      "dependencies": []
-    },
-    {
-      "index": 1,
-      "name": "ui-components",
-      "tasks": ["1.3", "1.5", "1.6"],
-      "ownedFiles": ["src/components/Login.tsx", "src/components/Register.tsx"],
-      "dependencies": []
-    },
-    {
-      "index": 2,
-      "name": "data-layer",
-      "tasks": ["2.1", "2.2"],
-      "ownedFiles": ["src/models/User.ts", "src/db/migrations/"],
-      "dependencies": [0]
-    }
-  ],
-  "serialTasks": ["1.7", "2.3"],
-  "verifyTasks": [{"id": "1.8", "phase": 1}, {"id": "2.4", "phase": 2}]
-}
-```
-
-## Step 5: Display Partition Plan
-
-Show the user what will be dispatched.
-
-```text
-Output Format:
-
-Dispatch Plan for '$specName'
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Strategy: file-ownership
-Teams: $groupCount teammates + 1 lead
-
-Group 1: api-layer (3 tasks)
-  Tasks: 1.1, 1.2, 1.4
-  Files: src/api/auth.ts, src/api/middleware.ts
-  Deps: none
-
-Group 2: ui-components (3 tasks)
-  Tasks: 1.3, 1.5, 1.6
-  Files: src/components/Login.tsx, src/components/Register.tsx
-  Deps: none
-
-Group 3: data-layer (2 tasks)
-  Tasks: 2.1, 2.2
-  Files: src/models/User.ts, src/db/migrations/
-  Deps: Group 1 must complete first
-
-Serial tasks (lead handles): 1.7, 2.3
-Verify checkpoints: 1.8, 2.4
-
-Estimated speedup: ~2.5x (12 tasks across 3 parallel groups)
-```
-
-If `--dry-run` flag present, STOP here. Do not generate team prompt.
-
-## Step 6: Clean Up Stale State and Write Dispatch State
-
-Before creating a new dispatch, handle any existing dispatch state.
-
-```text
-Stale State Cleanup:
-
-1. Check if specs/$specName/.dispatch-state.json already exists
-2. If it exists:
-   a. Read current status
-   b. If "dispatched": Warn user "Previous dispatch found (from $dispatchedAt).
-      Marking as superseded." Set status to "superseded".
-   c. If "merging": Error "Merge in progress. Run /ralph-parallel:merge --abort first."
-   d. If "merged" or "superseded": OK, overwrite.
-3. Write NEW dispatch state:
-
-Write specs/$specName/.dispatch-state.json:
-{
-  "dispatchedAt": "<ISO timestamp>",
-  "strategy": "file-ownership",
-  "maxTeammates": 4,
-  "groups": [<partition result>],
-  "serialTasks": ["1.7", "2.3"],
-  "verifyTasks": [{"id": "1.8", "phase": 1}, {"id": "2.4", "phase": 2}],
-  "status": "dispatched",
-  "completedGroups": []
-}
-```
-
-## Step 7: Create Team and Spawn Teammates
-
-Directly orchestrate parallel execution using Agent Teams.
-
-```text
-Team Creation (direct orchestration):
-
-1. Use TeamCreate to create team named "$specName-parallel"
-   - description: "Parallel execution of $specName spec"
+1. TeamCreate: name "$specName-parallel"
 
 2. Create one TaskList task per spec task (1:1 mapping):
-   - Subject format: "X.Y: task description" (spec task ID MUST be first)
-   - Description: include the full task block from tasks.md
-   - Set blockedBy dependencies:
-     - [VERIFY] checkpoint tasks are blockedBy ALL preceding tasks in same phase
-     - Serial tasks are blockedBy the verify checkpoint task
-     - Phase 2 tasks are blockedBy the Phase 1 verify checkpoint task
-   - This 1:1 mapping ensures the TaskCompleted hook can extract the spec
-     task ID directly from the task subject for per-task verification.
-
-3. Spawn teammates using Task tool (one per group, IN PARALLEL):
-   For each group, spawn with subagent_type="general-purpose":
-   - name: group name (e.g., "data-models")
-   - team_name: "$specName-parallel"
-   - mode: bypassPermissions
-   - run_in_background: true
-   - prompt: Build inline from the group's task data (see Teammate Prompt below)
-   - Include the list of TaskList task IDs assigned to this teammate
-
-4. Spawn ALL non-blocked teammates simultaneously.
-   For groups with Phase 2 tasks: instruct teammate to complete Phase 1
-   tasks first, then message lead and wait for Phase 1 verify before
-   proceeding to Phase 2 tasks.
+   - Subject: "X.Y: description" (spec task ID MUST start the subject)
+   - Description: full task block from partition JSON's taskDetails.rawBlock
+   - blockedBy: [VERIFY] tasks blocked by all preceding same-phase tasks,
+     Phase 2 tasks blocked by Phase 1 verify task
 ```
 
-### Teammate Prompt Construction
+## Step 6: Spawn Teammates
 
-For each teammate, construct the prompt inline (no template needed):
+For each group in the partition, generate a prompt and spawn:
 
-```text
-You are the "$groupName" teammate for the $specName spec parallel execution.
-
-## Your Tasks
-You have $N individual TaskList tasks to complete. Claim each one via
-TaskUpdate (set owner to your name, status to in_progress) as you start it,
-and mark it completed when done.
-
-Your TaskList task IDs: #$id1, #$id2, ...
-
-Execute these spec tasks IN ORDER:
-
-[For each task in group, include full task block from tasks.md:
-  ### Task X.Y: description (TaskList #$taskId)
-  - Files: ...
-  - Do: ...
-  - Done when: ...
-  - Verify: ...
-  - Commit: ...
-]
-
-[If group has Phase 2 tasks, add:]
-NOTE: Task X.Y is Phase 2. After completing Phase 1 tasks, STOP and
-message the lead: "Phase 1 $groupName tasks complete, awaiting verify."
-Wait for the lead to confirm before proceeding.
-
-## File Ownership — STRICTLY ENFORCED
-You ONLY modify these files: [ownedFiles list]
-You may read other files but NEVER write outside your ownership list.
-Before writing ANY file, verify it is in your ownership list above.
-If you need changes to a file you don't own, message the lead —
-do NOT make the change yourself. Ownership violations will be
-detected during merge verification and may require rework.
-
-## Rules
-- For each task: implement → verify → commit → mark [x] in specs/$specName/tasks.md
-- Claim each TaskList task as you start it, complete it when done
-- After ALL tasks done, message the lead:
-  "Group $groupName complete. All N tasks verified."
-- Working directory: $projectRoot
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/build-teammate-prompt.py \
+  --partition-file /tmp/$specName-partition.json \
+  --group-index $i \
+  --spec-name $specName \
+  --project-root $projectRoot \
+  --task-ids "#$id1,#$id2,..."
 ```
 
-## Step 8: Lead Coordination Loop
+Spawn via Task tool with the script's stdout as the prompt:
+- subagent_type: "general-purpose"
+- name: group name from partition JSON
+- team_name: "$specName-parallel"
+- mode: bypassPermissions
+- run_in_background: true
 
-After spawning teammates, the lead coordinates the execution.
+Spawn ALL non-blocked groups simultaneously (parallel Task calls).
+
+## Step 7: Lead Coordination Loop
 
 ```text
-Lead Coordination:
+1. MONITOR: Wait for teammate messages. Idle after sending is normal.
 
-1. MONITOR: Wait for teammate messages reporting completion.
-   - Teammates go idle after sending messages — this is normal.
-   - Track which groups have completed Phase 1 tasks.
+2. TRACK COMPLETION: When a group finishes:
+   a. Add group name to completedGroups in .dispatch-state.json
+   b. Write updated state
 
-2. TRACK GROUP COMPLETION: When a teammate reports all their tasks are done,
-   or when TaskList shows all tasks owned by a group are completed:
-   a. Add group name to completedGroups array in .dispatch-state.json
-   b. Write updated state file to specs/$specName/.dispatch-state.json
-   c. Log: "Group $groupName marked complete ($completedCount/$totalGroups)"
+3. STALL DETECTION: No message for 10+ minutes?
+   a. Send status check message
+   b. Wait 5 more minutes
+   c. If still no response: reassign tasks to self or serialize
 
-3. STALL DETECTION: While waiting for teammate messages:
-   a. If no message from a teammate for 10+ minutes, send them a status
-      check message: "Status check — are you blocked? Report progress."
-   b. Wait 5 more minutes for response.
-   c. If still no response, mark teammate as stalled:
-      - Options: (1) Reassign remaining tasks to self or another teammate,
-        (2) Shut down stalled teammate and serialize their tasks,
-        (3) Message user for guidance
-      - Log stall event: update .dispatch-state.json with
-        stalledTeammates: [{name, stalledAt, remainingTasks}]
-   d. Prefer option (1) if lead has capacity; otherwise use (2).
+4. PHASE GATE: When ALL Phase 1 tasks done:
+   a. Run Phase 1 verify checkpoint yourself
+   b. Mark verify task completed
+   c. Message Phase 2 teammates: "Proceed"
 
-4. PHASE GATE: When ALL Phase 1 group tasks are done:
-   a. Find the Phase 1 [VERIFY] checkpoint from verifyTasks
-      (the one with phase: 1 in verifyTasks array)
-   b. Run its verify command yourself (e.g., npm test && npm run typecheck)
-   c. Mark the verify TaskList entry as completed
-   d. Message teammates with Phase 2 tasks: "Phase 1 verified. Proceed."
-   e. Phase 2 TaskList entries auto-unblock via blockedBy dependencies.
+5. SERIAL TASKS: After Phase 2, execute serial tasks yourself
 
-5. SERIAL TASKS: After all parallel Phase 2 tasks complete:
-   a. Execute serial tasks yourself (these span file ownership boundaries)
-   b. For each: implement → verify → commit → mark [x] in tasks.md
-
-6. FINAL VERIFY: Run final [VERIFY] checkpoint (phase: 2 verify task).
+6. FINAL VERIFY: Run Phase 2 verify checkpoint
 
 7. CLEANUP:
-   a. Shut down remaining idle teammates via SendMessage shutdown_request
-   b. For file-ownership strategy: update dispatch-state.json status = "merged"
-      (dispatch handles the full lifecycle — no /merge step needed)
-   c. For worktree strategy: leave status as "dispatched"
-      (requires /ralph-parallel:merge for branch integration)
-   d. Delete team via TeamDelete
-   e. Output: "ALL_PARALLEL_COMPLETE — $totalTasks tasks done."
+   a. Shut down teammates (SendMessage shutdown_request)
+   b. File-ownership: set status = "merged" (no /merge needed)
+   c. Worktree: leave as "dispatched" (needs /merge)
+   d. TeamDelete
+   e. "ALL_PARALLEL_COMPLETE — $totalTasks tasks done."
 ```
+
+The dispatch-coordinator.sh Stop hook will re-inject this context if compaction occurs.
 
 ## Abort Handler
 
-When `--abort` flag is present, cancel the active dispatch:
+When `--abort` flag is present:
 
 ```text
-Abort Steps:
-
-1. Read specs/$specName/.dispatch-state.json
-   - Error if missing: "No active dispatch found for '$specName'."
-   - Error if status != "dispatched": "Dispatch is '$status', not active."
-
-2. Read team config ~/.claude/teams/$specName-parallel/config.json
-   - Extract list of active teammates from members array
-
-3. For each teammate: send shutdown_request via SendMessage
-   - Wait up to 30 seconds for shutdown confirmations
-
-4. Delete team via TeamDelete
-
-5. Update .dispatch-state.json:
-   - status = "aborted"
-   - abortedAt = ISO timestamp
-
-6. Output:
-   "Dispatch aborted for '$specName'.
-    Teammates shut down: $count
-    State: aborted (dispatch-state.json updated)
-    To re-dispatch: /ralph-parallel:dispatch $specName"
+1. Read .dispatch-state.json — error if missing or status != "dispatched"
+2. Read ~/.claude/teams/$specName-parallel/config.json for teammates
+3. SendMessage shutdown_request to each teammate (30s timeout)
+4. TeamDelete
+5. Set status = "aborted", abortedAt = ISO timestamp
+6. Output abort summary
 ```
 
 <mandatory>
 ## CRITICAL: Delegation Rules
 
-This command does ALL analysis itself (no subagent needed for task parsing/partitioning).
-Dispatch creates and orchestrates Agent Teams DIRECTLY using TeamCreate and Task tools.
+Analysis is done by scripts (parse-and-partition.py, build-teammate-prompt.py).
+Orchestration is done by this command using TeamCreate and Task tools.
 
 Do NOT:
 - Generate a prompt for the user to copy-paste (NEVER)
-- Modify tasks.md during analysis (read-only until execution)
+- Manually parse tasks.md or compute partitions (scripts do this)
 - Execute spec tasks yourself during dispatch (teammates do that)
 - Skip the partition display (user must see the plan)
 
 Do:
-- Read and analyze tasks.md thoroughly
-- Detect file conflicts and dependencies accurately
+- Run scripts via Bash tool for analysis
 - Use TeamCreate to create the team
-- Use Task tool to spawn teammates with inline prompts
-- Coordinate the execution loop as lead (verify checkpoints, serial tasks)
+- Use Task tool to spawn teammates with script-generated prompts
+- Coordinate the execution loop as lead
 - Save dispatch state for tracking
-- Clean up stale dispatch states before creating new ones
 </mandatory>
 
 ## Error Handling
 
 | Error | Action |
 |-------|--------|
-| No tasks.md | "Run /ralph-specum:tasks to generate task list first." |
-| All tasks complete | "All tasks already complete. Nothing to dispatch." |
-| Single task remaining | "Only 1 task remaining — no parallelism benefit. Run /ralph-specum:implement instead." |
-| File conflicts unresolvable | "Tasks have circular file dependencies. Consider serializing phases or splitting files." |
-| Too few tasks for teammates | Reduce teammate count to match available parallel groups |
+| Script exit 1 | "Run /ralph-specum:tasks to generate task list first." |
+| Script exit 2 | "All tasks already complete. Nothing to dispatch." |
+| Script exit 3 | "Only 1 task remaining. Run /ralph-specum:implement instead." |
+| Script exit 4 | "Circular file dependencies. Consider serializing or splitting files." |
+| Script not found | "Plugin scripts missing. Reinstall ralph-parallel." |
 
 ## Worktree Strategy (Phase 2)
 
-When `--strategy worktree` is specified:
+When `--strategy worktree`:
+- Each teammate gets its own git worktree branch
+- All files available (no ownership restrictions)
+- Partition by logical grouping, not file overlap
+- Requires /ralph-parallel:merge after completion
 
 ```text
-Worktree Strategy Differences:
-
-1. Each teammate gets its own git worktree instead of file ownership
-2. All files are available to all teammates (no ownership restrictions)
-3. Partition by logical grouping rather than file overlap
-4. Each worktree gets its own branch: parallel/$specName/$groupName
-
-Setup:
-- git config gc.auto 0  (MANDATORY: prevent object deletion)
-- git worktree add .worktrees/$groupName -b parallel/$specName/$groupName
-
-Teammate instructions include:
-- Work ONLY in assigned worktree directory
-- Commit and push to worktree branch
-- Do NOT modify files outside worktree
-
-Merge (after completion):
-- Integration branch: merge all worktree branches
-- Conflict resolution via /ralph-parallel:merge
-- Cleanup: git worktree remove .worktrees/$groupName
-- Restore: git config gc.auto 1
+Setup: git config gc.auto 0 && git worktree add .worktrees/$groupName -b parallel/$specName/$groupName
+Merge: /ralph-parallel:merge integrates branches, resolves conflicts, restores gc.auto
 ```
-
-Note: Worktree strategy requires merge step. File-ownership strategy avoids this complexity.
