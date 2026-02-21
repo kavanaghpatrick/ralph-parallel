@@ -12,7 +12,7 @@
   - **Verify**: `npm run db:migrate && npm test -- --grep "User model"`
   - **Commit**: `feat: add User model and database migration`
 
-- [ ] 1.2 [P] Implement password hashing utility
+- [x] 1.2 [P] Implement password hashing utility
   - **Files**: `src/utils/password.ts`, `src/utils/password.test.ts`
   - **Do**:
     1. Create hashPassword(plain) using bcrypt with salt rounds=12
