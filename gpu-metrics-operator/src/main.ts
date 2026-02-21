@@ -20,11 +20,25 @@ async function main(): Promise<void> {
   }
   const device: GPUDevice = maybeDevice;
 
+  device.lost.then((info) => {
+    console.error('WebGPU device lost:', info.message);
+    const fallback = document.getElementById('fallback');
+    if (fallback) showFallback(fallback, `GPU device lost: ${info.message}`);
+  });
+
   const format = navigator.gpu.getPreferredCanvasFormat();
 
-  function setupCanvas(id: string): ChartContext {
-    const canvas = document.getElementById(id) as HTMLCanvasElement;
-    const gpuContext = canvas.getContext('webgpu')!;
+  function setupCanvas(id: string): ChartContext | null {
+    const canvas = document.getElementById(id) as HTMLCanvasElement | null;
+    if (!canvas) {
+      console.error(`Canvas element #${id} not found`);
+      return null;
+    }
+    const gpuContext = canvas.getContext('webgpu');
+    if (!gpuContext) {
+      console.error(`Failed to get WebGPU context for #${id}`);
+      return null;
+    }
     gpuContext.configure({ device, format, alphaMode: 'premultiplied' });
     return { device, canvas, gpuContext, format };
   }
@@ -37,18 +51,17 @@ async function main(): Promise<void> {
   const scatter2D = createRingBuffer({ device, capacity: DEFAULT_RING_CAPACITY, channelCount: 2, label: 'scatter-2d' });
   const values1D = createRingBuffer({ device, capacity: DEFAULT_RING_CAPACITY, channelCount: 1, label: 'values-1d' });
 
-  const lineChart = createLineChart({ ctx: lineCtx, ringBuffer: timeSeries });
-  const heatmap = createHeatmap({ ctx: heatCtx, ringBuffer: scatter2D });
-  const histogram = createHistogram({ ctx: histCtx, ringBuffer: values1D });
+  const charts: import('./types').Chart[] = [];
+  if (lineCtx) charts.push(createLineChart({ ctx: lineCtx, ringBuffer: timeSeries }));
+  if (heatCtx) charts.push(createHeatmap({ ctx: heatCtx, ringBuffer: scatter2D }));
+  if (histCtx) charts.push(createHistogram({ ctx: histCtx, ringBuffer: values1D }));
 
   let dirty = false;
 
   function renderFrame(): void {
     if (!dirty) return;
     const encoder = device.createCommandEncoder();
-    lineChart.frame(encoder);
-    heatmap.frame(encoder);
-    histogram.frame(encoder);
+    for (const chart of charts) chart.frame(encoder);
     device.queue.submit([encoder.finish()]);
     dirty = false;
   }
