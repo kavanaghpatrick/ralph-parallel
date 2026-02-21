@@ -2,15 +2,22 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   handleRegister,
   handleLogin,
+  handleForgotPassword,
+  handleResetPassword,
   clearUsers,
+  clearResetTokens,
+  getResetToken,
   registerSchema,
   loginSchema,
   findUserByEmail,
 } from "./auth.js";
+import { getSentEmails, clearSentEmails } from "../services/email.js";
 
 describe("auth routes", () => {
   beforeEach(() => {
     clearUsers();
+    clearResetTokens();
+    clearSentEmails();
   });
 
   describe("registerSchema", () => {
@@ -137,6 +144,144 @@ describe("auth routes", () => {
 
     it("returns 400 for invalid input", async () => {
       const result = await handleLogin({ email: "bad" });
+
+      expect(result.status).toBe(400);
+      if ("error" in result.body) {
+        expect(result.body.error).toBe("Validation failed");
+      }
+    });
+  });
+});
+
+describe("password reset", () => {
+  beforeEach(async () => {
+    clearUsers();
+    clearResetTokens();
+    clearSentEmails();
+    await handleRegister({ email: "user@example.com", password: "oldpassword" });
+  });
+
+  describe("handleForgotPassword", () => {
+    it("sends reset email for registered user", async () => {
+      const result = await handleForgotPassword({ email: "user@example.com" });
+
+      expect(result.status).toBe(200);
+      if ("message" in result.body) {
+        expect(result.body.message).toContain("reset link has been sent");
+      }
+      const emails = getSentEmails();
+      expect(emails).toHaveLength(1);
+      expect(emails[0].to).toBe("user@example.com");
+      expect(emails[0].subject).toBe("Password Reset Request");
+    });
+
+    it("returns 200 for non-existent email (prevents enumeration)", async () => {
+      const result = await handleForgotPassword({ email: "nobody@example.com" });
+
+      expect(result.status).toBe(200);
+      if ("message" in result.body) {
+        expect(result.body.message).toContain("reset link has been sent");
+      }
+      expect(getSentEmails()).toHaveLength(0);
+    });
+
+    it("returns 400 for invalid email", async () => {
+      const result = await handleForgotPassword({ email: "bad" });
+
+      expect(result.status).toBe(400);
+      if ("error" in result.body) {
+        expect(result.body.error).toBe("Validation failed");
+      }
+    });
+
+    it("generates a reset token", async () => {
+      await handleForgotPassword({ email: "user@example.com" });
+      const emails = getSentEmails();
+      // Extract token from email body
+      const match = emails[0].body.match(/token=([a-f0-9]+)/);
+      expect(match).toBeTruthy();
+      const token = match![1];
+      const stored = getResetToken(token);
+      expect(stored).toBeDefined();
+      expect(stored!.expiresAt.getTime()).toBeGreaterThan(Date.now());
+    });
+  });
+
+  describe("handleResetPassword", () => {
+    let resetToken: string;
+
+    beforeEach(async () => {
+      await handleForgotPassword({ email: "user@example.com" });
+      const emails = getSentEmails();
+      const match = emails[0].body.match(/token=([a-f0-9]+)/);
+      resetToken = match![1];
+    });
+
+    it("resets password with valid token", async () => {
+      const result = await handleResetPassword({
+        token: resetToken,
+        password: "newpassword123",
+      });
+
+      expect(result.status).toBe(200);
+      if ("message" in result.body) {
+        expect(result.body.message).toBe("Password has been reset successfully");
+      }
+
+      // Verify new password works for login
+      const loginResult = await handleLogin({
+        email: "user@example.com",
+        password: "newpassword123",
+      });
+      expect(loginResult.status).toBe(200);
+    });
+
+    it("rejects old password after reset", async () => {
+      await handleResetPassword({
+        token: resetToken,
+        password: "newpassword123",
+      });
+
+      const loginResult = await handleLogin({
+        email: "user@example.com",
+        password: "oldpassword",
+      });
+      expect(loginResult.status).toBe(401);
+    });
+
+    it("invalidates token after use", async () => {
+      await handleResetPassword({
+        token: resetToken,
+        password: "newpassword123",
+      });
+
+      const result = await handleResetPassword({
+        token: resetToken,
+        password: "anotherpassword",
+      });
+      expect(result.status).toBe(400);
+      if ("error" in result.body) {
+        expect(result.body.error).toContain("Invalid or expired");
+      }
+    });
+
+    it("returns 400 for invalid token", async () => {
+      const result = await handleResetPassword({
+        token: "bogustoken",
+        password: "newpassword123",
+      });
+
+      expect(result.status).toBe(400);
+      if ("error" in result.body) {
+        expect(result.body.error).toContain("Invalid or expired");
+      }
+    });
+
+    it("returns 400 for short password", async () => {
+      const result = await handleResetPassword({
+        token: resetToken,
+        password: "short",
+      });
 
       expect(result.status).toBe(400);
       if ("error" in result.body) {
