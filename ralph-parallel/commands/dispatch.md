@@ -75,6 +75,7 @@ Display the output to the user. If `--dry-run`: STOP here.
      "groups": <from partition JSON>,
      "serialTasks": <from partition JSON>,
      "verifyTasks": <from partition JSON>,
+     "qualityCommands": <from partition JSON>,
      "status": "dispatched",
      "completedGroups": []
    }
@@ -96,13 +97,16 @@ Display the output to the user. If `--dry-run`: STOP here.
 
 For each group in the partition, generate a prompt and spawn:
 
+Extract `QUALITY_COMMANDS_JSON` from the partition JSON's `qualityCommands` field (as a JSON string).
+
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/build-teammate-prompt.py \
   --partition-file /tmp/$specName-partition.json \
   --group-index $i \
   --spec-name $specName \
   --project-root $projectRoot \
-  --task-ids "#$id1,#$id2,..."
+  --task-ids "#$id1,#$id2,..." \
+  --quality-commands "$QUALITY_COMMANDS_JSON"
 ```
 
 Spawn via Task tool with the script's stdout as the prompt:
@@ -128,10 +132,14 @@ Spawn ALL non-blocked groups simultaneously (parallel Task calls).
    b. Wait 5 more minutes
    c. If still no response: reassign tasks to self or serialize
 
-4. PHASE GATE: When ALL Phase 1 tasks done:
-   a. Run Phase 1 verify checkpoint yourself
-   b. Mark verify task completed
-   c. Message Phase 2 teammates: "Proceed"
+4. PHASE GATE: When ALL Phase N tasks done:
+   a. Run Phase N verify checkpoint task
+   b. Read qualityCommands from .dispatch-state.json
+   c. Run qualityCommands.build (if available)
+   d. Run qualityCommands.test (if available)
+   e. If build/test FAIL: message affected teammates with error output.
+      Do NOT mark phase complete. Teammates must fix.
+   f. If all pass: mark verify task completed, message Phase N+1 teammates: "Proceed"
 
 5. SERIAL TASKS: After Phase 2, execute serial tasks yourself
 

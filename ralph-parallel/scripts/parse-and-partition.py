@@ -19,9 +19,165 @@ Exit codes:
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    try:
+        import tomli as tomllib  # type: ignore[no-redefine]
+    except ModuleNotFoundError:
+        tomllib = None  # type: ignore[assignment]
+
+
+# ──────────────────────────────────────────────────────────────────
+# Quality Command Discovery
+# ──────────────────────────────────────────────────────────────────
+
+WEAK_PATTERNS = ['grep', 'ls ', 'cat ', 'echo ', 'true', 'test -f', 'wc ']
+STATIC_PATTERNS = ['tsc', 'typecheck', 'lint', 'eslint', 'prettier', 'mypy', 'pyright', 'clippy', 'ruff']
+RUNTIME_PATTERNS = ['build', 'vite', 'webpack', 'test', 'vitest', 'jest', 'pytest', 'cargo test', 'curl', 'serve', 'node ', 'python3 ']
+
+
+def _discover_node(root: Path) -> dict:
+    """Discover quality commands from package.json."""
+    result = {}
+    try:
+        pkg = json.loads((root / "package.json").read_text())
+        scripts = pkg.get("scripts", {})
+        mapping = {
+            "typecheck": ["typecheck", "check-types"],
+            "build": ["build"],
+            "test": ["test"],
+            "lint": ["lint"],
+            "dev": ["dev", "start"],
+        }
+        for slot, keys in mapping.items():
+            for key in keys:
+                if key in scripts:
+                    val = scripts[key]
+                    if '&&' not in val and '|' not in val and not val.startswith('npx ') and not val.startswith('npm '):
+                        val = f"npx {val}"
+                    result[slot] = val
+                    break
+    except (FileNotFoundError, json.JSONDecodeError, KeyError):
+        pass
+    return result
+
+
+def _discover_python(root: Path) -> dict:
+    """Discover quality commands from pyproject.toml."""
+    result = {}
+    if tomllib is None:
+        return result
+    try:
+        with open(root / "pyproject.toml", "rb") as f:
+            pyproject = tomllib.load(f)
+        tool = pyproject.get("tool", {})
+        if "pytest" in tool or "pytest.ini_options" in tool.get("pytest", {}):
+            result["test"] = "pytest"
+        deps_str = json.dumps(pyproject.get("project", {}).get("optional-dependencies", {}))
+        if "mypy" in deps_str:
+            result["typecheck"] = "mypy ."
+        elif "pyright" in deps_str:
+            result["typecheck"] = "pyright"
+        if "ruff" in deps_str or "ruff" in tool:
+            result["lint"] = "ruff check ."
+    except (FileNotFoundError, Exception):
+        pass
+    return result
+
+
+def _discover_makefile(root: Path) -> dict:
+    """Discover quality commands from Makefile targets."""
+    result = {}
+    try:
+        makefile = (root / "Makefile").read_text()
+        target_map = {"test": "test", "build": "build", "lint": "lint", "check": "typecheck", "typecheck": "typecheck"}
+        for line in makefile.split('\n'):
+            m = re.match(r'^(\w+)\s*:', line)
+            if m:
+                target = m.group(1)
+                if target in target_map:
+                    result.setdefault(target_map[target], f"make {target}")
+    except FileNotFoundError:
+        pass
+    return result
+
+
+def _discover_rust(root: Path) -> dict:
+    """Discover quality commands from Cargo.toml."""
+    result = {}
+    try:
+        (root / "Cargo.toml").read_text()
+        result["build"] = "cargo build"
+        result["test"] = "cargo test"
+        result["lint"] = "cargo clippy"
+    except FileNotFoundError:
+        pass
+    return result
+
+
+def discover_quality_commands(project_root: str) -> dict:
+    """Discover available quality commands from project config files.
+
+    Checks ecosystems in order: Node.js, Python, Makefile, Rust.
+    First non-null value wins per slot.
+    """
+    result = {"typecheck": None, "build": None, "test": None, "lint": None, "dev": None}
+    root = Path(project_root)
+
+    for discover_fn in [_discover_node, _discover_python, _discover_makefile, _discover_rust]:
+        partial = discover_fn(root)
+        for slot, val in partial.items():
+            if result.get(slot) is None and val is not None:
+                result[slot] = val
+
+    return result
+
+
+def classify_verify_commands(tasks: list[dict]) -> dict:
+    """Classify verify commands by quality tier: runtime > static > weak > none."""
+    counts = {"runtime": 0, "static": 0, "weak": 0, "none": 0}
+    details = []
+
+    for task in tasks:
+        verify = task.get('verify', '').strip()
+        if not verify:
+            counts["none"] += 1
+            details.append({"taskId": task['id'], "tier": "none", "command": ""})
+            continue
+
+        cmd_lower = verify.lower()
+        tier = "weak"  # default
+
+        # Check runtime first (highest tier)
+        for pat in RUNTIME_PATTERNS:
+            if pat in cmd_lower:
+                tier = "runtime"
+                break
+
+        # Then static
+        if tier == "weak":
+            for pat in STATIC_PATTERNS:
+                if pat in cmd_lower:
+                    tier = "static"
+                    break
+
+        # Then weak
+        if tier != "runtime" and tier != "static":
+            for pat in WEAK_PATTERNS:
+                if pat in cmd_lower:
+                    tier = "weak"
+                    break
+
+        counts[tier] += 1
+        details.append({"taskId": task['id'], "tier": tier, "command": verify})
+
+    return {**counts, "details": details}
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -245,7 +401,8 @@ def build_dependency_graph(tasks: list[dict]) -> list[dict]:
 # Partitioning
 # ──────────────────────────────────────────────────────────────────
 
-def partition_tasks(tasks: list[dict], max_teammates: int, content: str = '') -> dict:
+def partition_tasks(tasks: list[dict], max_teammates: int, content: str = '',
+                    quality_commands: dict = None, verify_quality: dict = None) -> dict:
     """Partition tasks into groups.
 
     If tasks.md contains pre-defined group annotations (### Group N: Name),
@@ -272,7 +429,8 @@ def partition_tasks(tasks: list[dict], max_teammates: int, content: str = '') ->
     # Build inter-group dependencies
     _add_group_dependencies(groups)
 
-    return _format_result(groups, serial_tasks, verify_tasks, tasks, incomplete)
+    return _format_result(groups, serial_tasks, verify_tasks, tasks, incomplete,
+                          quality_commands=quality_commands, verify_quality=verify_quality)
 
 
 def _build_groups_from_predefined(predefined, all_tasks, parallel_tasks, max_teammates):
@@ -407,7 +565,8 @@ def _add_group_dependencies(groups):
                         group['dependencies'].add(j)
 
 
-def _format_result(groups, serial_tasks, verify_tasks, all_tasks, incomplete):
+def _format_result(groups, serial_tasks, verify_tasks, all_tasks, incomplete,
+                   quality_commands=None, verify_quality=None):
     """Build the final result dict from groups."""
     # Verify tasks output
     verify_output = [
@@ -447,7 +606,7 @@ def _format_result(groups, serial_tasks, verify_tasks, all_tasks, incomplete):
     max_group = max((len(g['tasks']) for g in result_groups), default=1)
     speedup = round(total_parallel / max(max_group, 1), 1) if max_group > 0 else 1.0
 
-    return {
+    result = {
         'totalTasks': len(all_tasks),
         'incompleteTasks': len(incomplete),
         'groups': result_groups,
@@ -456,6 +615,11 @@ def _format_result(groups, serial_tasks, verify_tasks, all_tasks, incomplete):
         'phaseCount': len(set(t['phase'] for t in incomplete)),
         'estimatedSpeedup': speedup,
     }
+    if quality_commands is not None:
+        result['qualityCommands'] = quality_commands
+    if verify_quality is not None:
+        result['verifyQuality'] = verify_quality
+    return result
 
 
 def name_group(owned_files: list[str], group_index: int) -> str:
@@ -518,6 +682,24 @@ def format_plan(result: dict) -> str:
     lines.append(f"Estimated speedup: ~{result['estimatedSpeedup']}x "
                  f"({result['incompleteTasks']} tasks across {len(result['groups'])} parallel groups)")
 
+    # Weak verify warning
+    vq = result.get('verifyQuality')
+    if vq:
+        total = vq.get('runtime', 0) + vq.get('static', 0) + vq.get('weak', 0) + vq.get('none', 0)
+        weak_count = vq.get('weak', 0) + vq.get('none', 0)
+        if total > 0 and weak_count / total > 0.5:
+            lines.append('')
+            lines.append(f"WARNING: {weak_count}/{total} tasks have weak verify commands (grep/ls/cat).")
+            lines.append("Consider adding build/test verify commands to tasks.md before dispatch.")
+
+    # Quality commands summary
+    qc = result.get('qualityCommands')
+    if qc:
+        discovered = [k for k, v in qc.items() if v is not None]
+        if discovered:
+            lines.append('')
+            lines.append(f"Quality commands discovered: {', '.join(discovered)}")
+
     return '\n'.join(lines)
 
 
@@ -547,8 +729,15 @@ def main():
 
     tasks = build_dependency_graph(tasks)
 
+    # Infer project root from tasks.md path (walk up 2 dirs from specs/$name/tasks.md)
+    tasks_path_resolved = tasks_path.resolve()
+    project_root = str(tasks_path_resolved.parent.parent.parent)
+    quality_commands = discover_quality_commands(project_root)
+    verify_quality = classify_verify_commands(tasks)
+
     # Pass content so partition_tasks can check for pre-defined groups
-    result = partition_tasks(tasks, args.max_teammates, content)
+    result = partition_tasks(tasks, args.max_teammates, content,
+                             quality_commands=quality_commands, verify_quality=verify_quality)
 
     if result is None:
         print("All tasks complete. Nothing to dispatch.", file=sys.stderr)

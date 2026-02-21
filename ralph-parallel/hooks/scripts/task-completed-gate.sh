@@ -101,7 +101,7 @@ while IFS= read -r line; do
   fi
 
   if [ "$IN_TASK" = true ] && echo "$line" | grep -qE "\*\*Verify\*\*:"; then
-    VERIFY_CMD=$(echo "$line" | sed 's/.*\*\*Verify\*\*:\s*//' | sed 's/`//g')
+    VERIFY_CMD=$(echo "$line" | sed 's/.*\*\*Verify\*\*:[[:space:]]*//' | sed 's/`//g' | xargs)
     break
   fi
 done < "$SPEC_DIR/tasks.md"
@@ -113,15 +113,90 @@ fi
 
 # Run the verify command from project root
 cd "$PROJECT_ROOT"
+
+# --- Stage 1: Verify command with output capture ---
 echo "ralph-parallel: Verifying task $COMPLETED_SPEC_TASK: $VERIFY_CMD" >&2
 
-if eval "$VERIFY_CMD" >/dev/null 2>&1; then
-  # Verification passed
-  exit 0
-else
-  # Verification failed — block task completion with feedback via stderr
+VERIFY_OUTPUT=$(eval "$VERIFY_CMD" 2>&1) && VERIFY_EXIT=0 || VERIFY_EXIT=$?
+if [ $VERIFY_EXIT -ne 0 ]; then
   echo "QUALITY GATE FAILED for task $COMPLETED_SPEC_TASK ($TASK_SUBJECT)" >&2
-  echo "Verify command failed: $VERIFY_CMD" >&2
+  echo "Verify command failed (exit $VERIFY_EXIT): $VERIFY_CMD" >&2
+  echo "--- Output (last 50 lines) ---" >&2
+  echo "$VERIFY_OUTPUT" | tail -50 >&2
   echo "Fix the issues and mark the task complete again." >&2
   exit 2
 fi
+
+# --- Stage 2: Supplemental typecheck ---
+DISPATCH_STATE="$SPEC_DIR/.dispatch-state.json"
+TYPECHECK_CMD=$(jq -r '.qualityCommands.typecheck // empty' "$DISPATCH_STATE" 2>/dev/null || true)
+
+if [ -n "$TYPECHECK_CMD" ]; then
+  echo "ralph-parallel: Running supplemental typecheck: $TYPECHECK_CMD" >&2
+  TC_OUTPUT=$(eval "$TYPECHECK_CMD" 2>&1) && TC_EXIT=0 || TC_EXIT=$?
+  if [ $TC_EXIT -ne 0 ]; then
+    echo "SUPPLEMENTAL CHECK FAILED: typecheck" >&2
+    echo "Command: $TYPECHECK_CMD (exit $TC_EXIT)" >&2
+    echo "--- Output (last 30 lines) ---" >&2
+    echo "$TC_OUTPUT" | tail -30 >&2
+    echo "Fix type errors before marking task complete." >&2
+    exit 2
+  fi
+fi
+
+# --- Stage 3: File existence check ---
+TASK_FILES=""
+IN_TASK=false
+while IFS= read -r fline; do
+  if echo "$fline" | grep -qE "^\s*- \[.\] ${COMPLETED_SPEC_TASK}\b"; then
+    IN_TASK=true; continue
+  fi
+  if [ "$IN_TASK" = true ] && echo "$fline" | grep -qE "^\s*- \[.\] [0-9]"; then break; fi
+  if [ "$IN_TASK" = true ] && echo "$fline" | grep -qE "\*\*Files\*\*:"; then
+    TASK_FILES=$(echo "$fline" | sed 's/.*\*\*Files\*\*:[[:space:]]*//' | sed 's/`//g' | xargs)
+    break
+  fi
+done < "$SPEC_DIR/tasks.md"
+
+if [ -n "$TASK_FILES" ]; then
+  MISSING=""
+  IFS=',' read -ra FILE_LIST <<< "$TASK_FILES"
+  for f in "${FILE_LIST[@]}"; do
+    f=$(echo "$f" | xargs)  # trim whitespace
+    [ -z "$f" ] && continue
+    if [ ! -e "$PROJECT_ROOT/$f" ]; then
+      MISSING="$MISSING $f"
+    fi
+  done
+  if [ -n "$MISSING" ]; then
+    echo "SUPPLEMENTAL CHECK FAILED: file existence" >&2
+    echo "Missing files:$MISSING" >&2
+    echo "Create the missing files before marking task complete." >&2
+    exit 2
+  fi
+fi
+
+# --- Stage 4: Periodic build check ---
+BUILD_CMD=$(jq -r '.qualityCommands.build // empty' "$DISPATCH_STATE" 2>/dev/null || true)
+BUILD_INTERVAL=${BUILD_INTERVAL:-3}
+
+if [ -n "$BUILD_CMD" ]; then
+  # Count completed tasks (marked [x]) in tasks.md
+  COMPLETED_COUNT=$(grep -cE '^\s*- \[x\]' "$SPEC_DIR/tasks.md" 2>/dev/null || echo 0)
+
+  if [ $((COMPLETED_COUNT % BUILD_INTERVAL)) -eq 0 ] || [ "$COMPLETED_COUNT" -le 1 ]; then
+    echo "ralph-parallel: Running periodic build check ($COMPLETED_COUNT tasks done): $BUILD_CMD" >&2
+    BUILD_OUTPUT=$(eval "$BUILD_CMD" 2>&1) && BUILD_EXIT=0 || BUILD_EXIT=$?
+    if [ $BUILD_EXIT -ne 0 ]; then
+      echo "SUPPLEMENTAL CHECK FAILED: build (periodic, every ${BUILD_INTERVAL} tasks)" >&2
+      echo "Command: $BUILD_CMD (exit $BUILD_EXIT)" >&2
+      echo "--- Output (last 50 lines) ---" >&2
+      echo "$BUILD_OUTPUT" | tail -50 >&2
+      echo "Fix build errors before marking task complete." >&2
+      exit 2
+    fi
+  fi
+fi
+
+# All stages passed
+exit 0

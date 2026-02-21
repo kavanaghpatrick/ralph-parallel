@@ -1,0 +1,13 @@
+{
+  "source": "spec",
+  "name": "parallel-qa-overhaul",
+  "basePath": "specs/parallel-qa-overhaul",
+  "phase": "execution",
+  "taskIndex": 1,
+  "totalTasks": 26,
+  "taskIteration": 1,
+  "maxTaskIterations": 5,
+  "globalIteration": 1,
+  "maxGlobalIterations": 100,
+  "awaitingApproval": false
+}

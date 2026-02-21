@@ -71,9 +71,13 @@ there's no git merge needed. Instead, verify consistency:
    - git status --porcelain
    - If uncommitted changes: WARN and list them
 
-3. CHECK: All verify commands pass
-   - For each completed task, re-run its Verify command
-   - Collect pass/fail results
+3. CHECK: Build verification
+   a. Read qualityCommands from .dispatch-state.json
+   b. Run qualityCommands.build (if available)
+   c. Run qualityCommands.test (if available)
+   d. Run qualityCommands.lint (if available)
+   e. Collect pass/fail per command
+   f. If ANY fail: report specific failures with output, do NOT mark as merged
 
 4. UPDATE: Mark dispatch as merged
    - Update .dispatch-state.json: status = "merged"

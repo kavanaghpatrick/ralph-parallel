@@ -21,7 +21,28 @@ import json
 import sys
 
 
-def build_prompt(group: dict, spec_name: str, project_root: str, task_ids: list[str]) -> str:
+def build_quality_section(quality_commands: dict) -> list[str]:
+    """Build the Quality Checks section lines from discovered quality commands."""
+    lines = []
+    tc = quality_commands.get('typecheck')
+    test = quality_commands.get('test')
+    build = quality_commands.get('build')
+
+    if tc:
+        lines.append(f'- After EACH task, run typecheck: `{tc}`')
+        lines.append('  If it fails, fix errors BEFORE marking the task complete.')
+    if test:
+        lines.append(f'- Write at least one test per implementation task. Run tests: `{test}`')
+    elif build:
+        lines.append(f'- Verify your code builds: `{build}`')
+    lines.append('- If typecheck/build fails after your changes, fix BEFORE marking task complete')
+    if not tc and not test and not build:
+        lines.append('- Run any available project checks (build, lint, typecheck) after each task.')
+    return lines
+
+
+def build_prompt(group: dict, spec_name: str, project_root: str, task_ids: list[str],
+                 quality_commands: dict = None) -> str:
     """Build the complete teammate prompt for a group."""
     lines = []
 
@@ -90,6 +111,13 @@ def build_prompt(group: dict, spec_name: str, project_root: str, task_ids: list[
     lines.append('detected by the PreToolUse hook and blocked automatically.')
     lines.append('')
 
+    # Quality Checks
+    if quality_commands is None:
+        quality_commands = {}
+    lines.append('## Quality Checks')
+    lines.extend(build_quality_section(quality_commands))
+    lines.append('')
+
     # Rules
     lines.append('## Rules')
     lines.append(f'- For each task: implement → verify → commit → mark [x] in specs/{spec_name}/tasks.md')
@@ -108,6 +136,7 @@ def main():
     parser.add_argument('--spec-name', required=True, help='Spec name')
     parser.add_argument('--project-root', required=True, help='Project root directory')
     parser.add_argument('--task-ids', required=True, help='Comma-separated TaskList IDs (e.g., "#1,#2,#3")')
+    parser.add_argument('--quality-commands', default='{}', help='JSON of quality commands')
     args = parser.parse_args()
 
     # Read partition JSON
@@ -129,8 +158,10 @@ def main():
         sys.exit(1)
 
     task_ids = [t.strip() for t in args.task_ids.split(',')]
+    quality_commands = json.loads(args.quality_commands)
 
-    prompt = build_prompt(group, args.spec_name, args.project_root, task_ids)
+    prompt = build_prompt(group, args.spec_name, args.project_root, task_ids,
+                          quality_commands=quality_commands)
     print(prompt)
 
 

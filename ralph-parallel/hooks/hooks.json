@@ -40,7 +40,7 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/task-completed-gate.sh",
-            "timeout": 120
+            "timeout": 300
           }
         ]
       }
