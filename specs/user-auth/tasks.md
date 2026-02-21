@@ -22,7 +22,7 @@
   - **Verify**: `npm test -- --grep "password"`
   - **Commit**: `feat: add password hashing utilities`
 
-- [ ] 1.3 [P] Build JWT token service
+- [x] 1.3 [P] Build JWT token service
   - **Files**: `src/services/token.ts`, `src/services/token.test.ts`
   - **Do**:
     1. Create generateToken(userId, email) with 24h expiry
@@ -33,7 +33,7 @@
   - **Verify**: `npm test -- --grep "token"`
   - **Commit**: `feat: add JWT token service`
 
-- [ ] 1.4 [P] Create auth API routes (register + login)
+- [x] 1.4 [P] Create auth API routes (register + login)
   - **Files**: `src/api/auth.ts`, `src/api/auth.test.ts`
   - **Do**:
     1. POST /api/auth/register - validate input, hash password, create user, return token
@@ -44,7 +44,7 @@
   - **Verify**: `npm test -- --grep "auth routes"`
   - **Commit**: `feat: add register and login API routes`
 
-- [ ] 1.5 [P] Build auth middleware
+- [x] 1.5 [P] Build auth middleware
   - **Files**: `src/api/middleware.ts`, `src/api/middleware.test.ts`
   - **Do**:
     1. Create requireAuth middleware that extracts JWT from Authorization header
@@ -55,7 +55,7 @@
   - **Verify**: `npm test -- --grep "middleware"`
   - **Commit**: `feat: add auth middleware`
 
-- [ ] 1.6 [P] Create login form component
+- [x] 1.6 [P] Create login form component
   - **Files**: `src/components/LoginForm.tsx`, `src/components/LoginForm.test.tsx`
   - **Do**:
     1. Build login form with email + password fields
@@ -67,7 +67,7 @@
   - **Verify**: `npm test -- --grep "LoginForm"`
   - **Commit**: `feat: add LoginForm component`
 
-- [ ] 1.7 [P] Create registration form component
+- [x] 1.7 [P] Create registration form component
   - **Files**: `src/components/RegisterForm.tsx`, `src/components/RegisterForm.test.tsx`
   - **Do**:
     1. Build registration form with email, password, confirmPassword
