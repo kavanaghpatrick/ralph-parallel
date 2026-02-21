@@ -91,7 +91,7 @@
 
 ## Phase 2: Enhanced Features
 
-- [ ] 2.1 Add password reset flow (API)
+- [x] 2.1 Add password reset flow (API)
   - **Files**: `src/api/auth.ts`, `src/services/email.ts`, `src/services/email.test.ts`
   - **Do**:
     1. POST /api/auth/forgot-password - generate reset token, send email
@@ -112,7 +112,7 @@
   - **Verify**: `npm test -- --grep "ForgotPassword|ResetPassword"`
   - **Commit**: `feat: add password reset UI components`
 
-- [ ] 2.3 Add session management
+- [x] 2.3 Add session management
   - **Files**: `src/models/Session.ts`, `src/db/migrations/002_sessions.sql`, `src/api/middleware.ts`
   - **Do**:
     1. Create Session model with userId, token, expiresAt, deviceInfo

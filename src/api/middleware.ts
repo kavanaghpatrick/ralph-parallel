@@ -1,8 +1,10 @@
 import { verifyToken } from "../services/token.js";
+import { findSessionByToken, invalidateSession } from "../models/Session.js";
 
 export interface AuthenticatedUser {
   userId: string;
   email: string;
+  sessionId?: string;
 }
 
 export interface RequestContext {
@@ -20,7 +22,14 @@ export interface AuthError {
   body: { error: string };
 }
 
-export function requireAuth(context: RequestContext): AuthResult | AuthError {
+export interface RequireAuthOptions {
+  validateSession?: boolean;
+}
+
+export function requireAuth(
+  context: RequestContext,
+  options: RequireAuthOptions = {},
+): AuthResult | AuthError {
   const authHeader = context.headers["authorization"];
 
   if (!authHeader) {
@@ -44,6 +53,27 @@ export function requireAuth(context: RequestContext): AuthResult | AuthError {
 
   try {
     const payload = verifyToken(token);
+
+    // Optionally validate the token has an active session
+    if (options.validateSession) {
+      const session = findSessionByToken(token);
+      if (!session) {
+        return {
+          authenticated: false,
+          status: 401,
+          body: { error: "Session expired or invalidated" },
+        };
+      }
+      return {
+        authenticated: true,
+        user: {
+          userId: payload.userId,
+          email: payload.email,
+          sessionId: session.id,
+        },
+      };
+    }
+
     return {
       authenticated: true,
       user: {
@@ -58,4 +88,20 @@ export function requireAuth(context: RequestContext): AuthResult | AuthError {
       body: { error: "Invalid or expired token" },
     };
   }
+}
+
+export function handleLogout(
+  context: RequestContext,
+): { status: number; body: { message: string } | { error: string } } {
+  const authResult = requireAuth(context, { validateSession: true });
+
+  if (!authResult.authenticated) {
+    return { status: 401, body: { error: "Not authenticated" } };
+  }
+
+  if (authResult.user.sessionId) {
+    invalidateSession(authResult.user.sessionId);
+  }
+
+  return { status: 200, body: { message: "Logged out successfully" } };
 }
