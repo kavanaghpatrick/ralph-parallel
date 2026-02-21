@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=1280, initial-scale=1.0" />
+  <title>GPU Metrics Operator</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #1a1a2e;
+      color: #e0e0e0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      min-width: 1280px;
+      min-height: 720px;
+      overflow: hidden;
+    }
+
+    #app {
+      display: grid;
+      grid-template-rows: auto 1fr 1fr;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    header {
+      padding: 12px 24px;
+      background: #16213e;
+      border-bottom: 1px solid #0f3460;
+      font-size: 18px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+
+    .chart-row-top {
+      display: grid;
+      grid-template-columns: 1fr;
+      padding: 8px;
+      min-height: 0;
+    }
+
+    .chart-row-bottom {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      padding: 0 8px 8px;
+      min-height: 0;
+    }
+
+    .panel {
+      position: relative;
+      background: #16213e;
+      border: 1px solid #0f3460;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .panel-title {
+      position: absolute;
+      top: 8px;
+      left: 12px;
+      font-size: 13px;
+      font-weight: 500;
+      color: #a0a0c0;
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    .panel canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    #fallback {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: #1a1a2e;
+      z-index: 100;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      padding: 48px;
+    }
+
+    #fallback.visible {
+      display: flex;
+    }
+
+    #fallback p {
+      font-size: 20px;
+      line-height: 1.6;
+      max-width: 600px;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header>GPU Metrics Operator</header>
+
+    <div class="chart-row-top">
+      <div class="panel">
+        <div class="panel-title">Time Series (EMA Smoothed)</div>
+        <canvas id="line-canvas"></canvas>
+      </div>
+    </div>
+
+    <div class="chart-row-bottom">
+      <div class="panel">
+        <div class="panel-title">2D Density Heatmap</div>
+        <canvas id="heatmap-canvas"></canvas>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Value Distribution</div>
+        <canvas id="histogram-canvas"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div id="fallback"></div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
