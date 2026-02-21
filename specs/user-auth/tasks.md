@@ -102,7 +102,7 @@
   - **Verify**: `npm test -- --grep "password reset"`
   - **Commit**: `feat: add password reset API flow`
 
-- [ ] 2.2 Add password reset UI
+- [x] 2.2 Add password reset UI
   - **Files**: `src/components/ForgotPassword.tsx`, `src/components/ResetPassword.tsx`
   - **Do**:
     1. Build forgot-password form (email input → submit)
