@@ -1,2 +1,5 @@
 specs/.current-spec
 **/.progress.md
+**/target/
+**/.dispatch-state.json
+**/.ralph-state.json
