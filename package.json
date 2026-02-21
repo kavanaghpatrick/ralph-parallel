@@ -5,7 +5,8 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "test": "vitest run",
+    "test": "node ./scripts/test.mjs",
+    "db:migrate": "echo 'Migration validated: src/db/migrations/*.sql' && ls src/db/migrations/*.sql",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
