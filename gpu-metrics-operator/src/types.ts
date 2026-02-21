@@ -1,9 +1,3 @@
-// WGSL module declaration
-declare module '*.wgsl' {
-  const shader: string;
-  export default shader;
-}
-
 // Chart interface -- every chart module exports a factory returning this
 export interface Chart {
   /** Encode compute + render passes into the given encoder. Returns true if anything was drawn. */
