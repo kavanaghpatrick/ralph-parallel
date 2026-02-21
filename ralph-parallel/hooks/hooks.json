@@ -1,5 +1,5 @@
 {
-  "description": "Ralph Parallel hooks for quality gates and session setup",
+  "description": "Ralph Parallel hooks for quality gates, file ownership enforcement, and session setup",
   "hooks": {
     "SessionStart": [
       {
@@ -7,6 +7,18 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/session-setup.sh"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/file-ownership-guard.sh",
+            "timeout": 10
           }
         ]
       }

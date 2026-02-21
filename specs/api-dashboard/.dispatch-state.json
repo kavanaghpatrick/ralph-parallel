@@ -1,0 +1,34 @@
+{
+  "dispatchedAt": "2026-02-21T16:25:00Z",
+  "strategy": "file-ownership",
+  "maxTeammates": 2,
+  "groups": [
+    {
+      "index": 0,
+      "name": "ui-components",
+      "tasks": ["1.3", "1.5"],
+      "ownedFiles": [
+        "src/components/MetricsChart.tsx",
+        "src/components/MetricsChart.test.tsx",
+        "src/components/ApiKeyManager.tsx",
+        "src/components/ApiKeyManager.test.tsx"
+      ],
+      "dependencies": []
+    },
+    {
+      "index": 1,
+      "name": "api-keys",
+      "tasks": ["1.4"],
+      "ownedFiles": [
+        "src/api/keys.ts",
+        "src/api/keys.test.ts",
+        "src/models/ApiKey.ts"
+      ],
+      "dependencies": []
+    }
+  ],
+  "serialTasks": [],
+  "verifyTasks": ["1.6"],
+  "status": "merged",
+  "completedGroups": []
+}

@@ -73,30 +73,12 @@ if [ -z "$SPEC_DIR" ] || [ ! -f "$SPEC_DIR/tasks.md" ]; then
 fi
 
 # --- Determine which spec task was just completed ---
-# Strategy: Look up the TaskList task_id in the dispatch state to find its spec task IDs.
-# The dispatch state maps group tasks to spec task IDs.
-# We find which group this task belongs to by checking task_subject or task_description
-# for spec task ID patterns (X.Y format).
-
-DISPATCH_STATE="$SPEC_DIR/.dispatch-state.json"
+# With 1:1 TaskList-to-spec-task mapping, the subject starts with "X.Y: description".
+# Extract the spec task ID directly from the beginning of TASK_SUBJECT.
 COMPLETED_SPEC_TASK=""
 
-if [ -f "$DISPATCH_STATE" ]; then
-  # Extract the LAST spec task ID mentioned in the subject — this is the task just completed
-  # Task subjects like "Group 1: data-models (tasks 1.1, 1.2)" contain all group tasks,
-  # but task_description often has the specific task being completed.
-  # Best approach: check description first, then subject
-  if [ -n "$TASK_DESCRIPTION" ]; then
-    COMPLETED_SPEC_TASK=$(echo "$TASK_DESCRIPTION" | grep -oE '[0-9]+\.[0-9]+' | tail -1)
-  fi
-  if [ -z "$COMPLETED_SPEC_TASK" ] && [ -n "$TASK_SUBJECT" ]; then
-    # If subject has only one task ID, use it; otherwise allow through
-    TASK_IDS_IN_SUBJECT=$(echo "$TASK_SUBJECT" | grep -oE '[0-9]+\.[0-9]+' | sort -u)
-    TASK_COUNT=$(echo "$TASK_IDS_IN_SUBJECT" | wc -l | tr -d ' ')
-    if [ "$TASK_COUNT" = "1" ]; then
-      COMPLETED_SPEC_TASK="$TASK_IDS_IN_SUBJECT"
-    fi
-  fi
+if [ -n "$TASK_SUBJECT" ]; then
+  COMPLETED_SPEC_TASK=$(echo "$TASK_SUBJECT" | grep -oE '^[0-9]+\.[0-9]+')
 fi
 
 if [ -z "$COMPLETED_SPEC_TASK" ]; then

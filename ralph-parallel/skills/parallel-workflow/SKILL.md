@@ -20,7 +20,7 @@ Ralph Parallel extends ralph-specum by enabling multiple spec tasks to execute s
    → Analyzes tasks, partitions by file ownership, creates team, spawns teammates
    → Lead coordinates execution, runs verify checkpoints, handles serial tasks
 4. Monitor progress:         /ralph-parallel:status
-5. Integrate results:        /ralph-parallel:merge (worktree strategy only)
+5. Integrate results:        /ralph-parallel:merge (worktree only; file-ownership completes in dispatch)
 6. Handle remaining serial:  /ralph-specum:implement (if any tasks remain)
 ```
 
@@ -72,6 +72,45 @@ dispatched → superseded    (new dispatch replaces stale one)
 - File ownership violations are detected during merge
 - [VERIFY] checkpoint tasks are always executed by the lead sequentially
 - Full test suite runs after merge (if configured)
+
+## Worked Example
+
+A spec "todo-api" with 4 tasks:
+
+```text
+- [ ] 1.1 [P] Create Todo model          Files: src/models/Todo.ts
+- [ ] 1.2 [P] Create API handler          Files: src/api/todos.ts
+- [ ] 1.3 [P] Add validation middleware   Files: src/api/middleware.ts
+- [ ] 1.4 [VERIFY] Run full test suite
+```
+
+**Dispatch partitions** into 2 groups (tasks 1.1+1.2 share no files with 1.3):
+
+```text
+Dispatch Plan for 'todo-api'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Strategy: file-ownership
+Teams: 2 teammates + 1 lead
+
+Group 1: backend (2 tasks)
+  Tasks: 1.1, 1.2
+  Files: src/models/Todo.ts, src/api/todos.ts
+
+Group 2: middleware (1 task)
+  Tasks: 1.3
+  Files: src/api/middleware.ts
+
+Verify checkpoints: 1.4
+```
+
+**Execution flow**:
+1. Lead creates team "todo-api-parallel", creates 4 TaskList tasks (1:1 mapping)
+2. Spawns "backend" and "middleware" teammates in parallel
+3. Both work simultaneously on their owned files
+4. Teammates message lead: "Group backend complete. 2 tasks verified."
+5. Lead runs verify 1.4: `npm test && npm run typecheck` — PASS
+6. Lead sets status = "merged", shuts down team
+7. Output: "ALL_PARALLEL_COMPLETE — 4 tasks done."
 
 ## Tips
 

@@ -8,8 +8,8 @@ Each teammate prompt should include these sections:
 
 ### 1. Identity and Assignment
 - Teammate name matches group name (e.g., "data-models")
-- References the spec name and TaskList task ID
-- Claims the task via TaskUpdate
+- References the spec name and individual TaskList task IDs (1:1 with spec tasks)
+- Claims each task individually via TaskUpdate as they start it
 
 ### 2. Task List
 - Full task blocks from tasks.md, in execution order
@@ -22,9 +22,8 @@ Each teammate prompt should include these sections:
 - This is the primary enforcement mechanism for file-ownership strategy
 
 ### 4. Execution Rules
-- For each task: implement → run verify → commit → mark [x] in tasks.md
-- After all tasks: mark TaskList entry as completed
-- Message lead with completion summary
+- For each task: claim TaskList task → implement → run verify → commit → mark [x] in tasks.md → mark TaskList task as completed
+- After all tasks: message lead with completion summary
 
 ### 5. Communication Protocol
 - Message lead on completion: "Group $name complete. All N tasks verified."
@@ -37,7 +36,7 @@ Each teammate prompt should include these sections:
 |-------|--------|---------|
 | Group name | Partition result | "data-models" |
 | Spec name | Dispatch state | "user-auth" |
-| TaskList ID | Created in Step 7 | "#1" |
+| TaskList IDs | Created in Step 7 (one per spec task) | "#1, #2, #3" |
 | Task list | tasks.md content | Full task blocks |
 | Owned files | Partition result | ["src/models/User.ts", ...] |
 | Dependencies | Partition result | [] or ["api-layer"] |

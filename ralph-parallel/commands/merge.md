@@ -6,7 +6,9 @@ allowed-tools: [Read, Write, Edit, Bash, Task, AskUserQuestion, Glob, Grep]
 
 # Merge
 
-Integrates results from parallel Agent Teams execution back into a cohesive state. Handles both file-ownership (verify consistency) and worktree (git merge) strategies.
+Integrates results from parallel Agent Teams execution back into a cohesive state.
+
+**Note**: For file-ownership strategy, this command is optional — it performs a consistency check only. Dispatch handles the full lifecycle including cleanup. Merge is required only for worktree strategy.
 
 ## Parse Arguments
 
@@ -48,12 +50,12 @@ Completion Check:
    - Ask user: "Some groups incomplete. Merge anyway? (partial results)"
 ```
 
-## Step 3: File-Ownership Merge
+## Step 3: File-Ownership Verification (Optional)
 
 When strategy is `file-ownership`:
 
 ```text
-File-Ownership Verification:
+File-Ownership Verification (consistency check — dispatch already completed execution):
 
 Since all teammates worked in the same directory with file ownership,
 there's no git merge needed. Instead, verify consistency:

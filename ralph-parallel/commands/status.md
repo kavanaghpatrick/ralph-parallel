@@ -1,7 +1,7 @@
 ---
 description: Show parallel dispatch status and team progress
 argument-hint: [spec-name] [--json]
-allowed-tools: [Read, Bash, Glob, Grep]
+allowed-tools: [Read, Bash, Glob, Grep, TaskList, TaskGet]
 ---
 
 # Status
@@ -13,6 +13,7 @@ Shows the current state of parallel dispatch — which groups are active, task c
 From `$ARGUMENTS`, extract:
 - **spec-name**: Optional spec name (defaults to active spec)
 - **--json**: Output raw JSON instead of formatted display
+- **--watch**: Continuously poll and refresh status every 30 seconds
 
 ## Step 1: Resolve Spec and Load State
 
@@ -28,19 +29,31 @@ From `$ARGUMENTS`, extract:
 ## Step 2: Compute Progress
 
 ```text
-For each group in dispatch state:
+Primary source: TaskList (most reliable, real-time status)
+Secondary source: tasks.md checkboxes, git log (fallback/supplementary)
 
-1. Count completed tasks:
-   - Read tasks.md, match each group's task IDs
+1. QUERY TASKLIST: Use TaskList to get all tasks.
+   - Group tasks by owner (teammate name = group name)
+   - For each task, check status: pending, in_progress, completed
+   - Count completed vs total per group
+
+2. CROSS-CHECK with tasks.md:
+   - Read tasks.md, match each group's spec task IDs
    - Count [x] vs [ ] for group's tasks
+   - If TaskList and tasks.md disagree, prefer TaskList
 
-2. Detect active work:
+3. DETECT ACTIVE WORK (secondary signal):
    - Check git log for recent commits matching group's files
-   - Check for uncommitted changes in group's owned files
+   - This is supplementary — use for "Current activity" display line
 
-3. Check dependencies:
-   - Are blocking groups complete?
+4. CHECK DEPENDENCIES:
+   - Are blocking groups complete (via completedGroups in dispatch state)?
    - Is this group unblocked and ready?
+
+5. HANDLE VERIFY TASKS:
+   - verifyTasks may be objects {id, phase} or strings (legacy)
+   - For objects: extract id field for display
+   - For strings: use directly
 ```
 
 ## Step 3: Display Status
@@ -76,7 +89,23 @@ Verify: 0/2 (pending)
 
 Next steps:
   - Groups still running: wait for Agent Teams to complete
-  - All groups done: run /ralph-parallel:merge
+  - All groups done (file-ownership): dispatch completes automatically
+  - All groups done (worktree): run /ralph-parallel:merge
+```
+
+## Watch Mode
+
+When `--watch` flag is present:
+
+```text
+1. Run normal status display (Steps 1-3)
+2. Wait 30 seconds
+3. Re-query TaskList and tasks.md for updated status
+4. Clear previous output and display updated status
+5. Repeat until:
+   - All tasks are completed → "All tasks complete. Watch mode ended."
+   - Dispatch status changes to "merged" or "aborted" → stop
+   - User interrupts
 ```
 
 ## JSON Output
