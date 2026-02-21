@@ -17,16 +17,18 @@ Ralph Parallel extends ralph-specum by enabling multiple spec tasks to execute s
 1. Create spec normally:     /ralph-specum:start my-feature "goal"
 2. Complete spec phases:     research → requirements → design → tasks
 3. Dispatch for parallel:    /ralph-parallel:dispatch
+   → Analyzes tasks, partitions by file ownership, creates team, spawns teammates
+   → Lead coordinates execution, runs verify checkpoints, handles serial tasks
 4. Monitor progress:         /ralph-parallel:status
-5. Integrate results:        /ralph-parallel:merge
-6. Handle remaining serial:  /ralph-specum:implement
+5. Integrate results:        /ralph-parallel:merge (worktree strategy only)
+6. Handle remaining serial:  /ralph-specum:implement (if any tasks remain)
 ```
 
 ## Strategies
 
 ### File Ownership (Default)
 
-Each teammate gets exclusive ownership of certain files. No merge needed — teammates work in the same repo but on different files.
+Each teammate gets exclusive ownership of certain files. No merge needed — teammates work in the same repo but on different files. The lead orchestrates everything directly.
 
 **Best for:** Most projects. Simple, no merge complexity.
 **Limitation:** Tasks sharing files must be serialized.
@@ -42,25 +44,33 @@ Each teammate gets its own git worktree with a separate branch. Full file access
 
 | Command | Purpose |
 |---------|---------|
-| `/ralph-parallel:dispatch` | Analyze tasks, partition, generate team prompt |
+| `/ralph-parallel:dispatch` | Analyze tasks, partition, create team, orchestrate execution |
 | `/ralph-parallel:status` | Show parallel execution progress |
-| `/ralph-parallel:merge` | Integrate results after team completion |
+| `/ralph-parallel:merge` | Integrate results (worktree strategy) or verify consistency |
 
 ## How It Works
 
 1. **Dispatch** reads tasks.md and builds a dependency graph based on file overlap
 2. Tasks with non-overlapping files are grouped for parallel execution
-3. A team creation prompt is generated (Agent Teams uses natural language)
-4. The user pastes the prompt into a new session to create the team
-5. Teammates execute their assigned tasks simultaneously
-6. After completion, **merge** verifies consistency and integrates results
-7. Remaining serial tasks and verify checkpoints run via normal ralph-specum
+3. Dispatch creates an Agent Team directly using TeamCreate + Task tools
+4. Teammates are spawned in parallel with inline prompts specifying their tasks and owned files
+5. The lead monitors completion, runs verify checkpoints, and handles serial tasks
+6. For file-ownership strategy: no merge needed — dispatch handles everything end-to-end
+7. For worktree strategy: **merge** resolves branches after team completion
+
+## Dispatch State Lifecycle
+
+```text
+dispatched → merged        (normal completion)
+dispatched → merging → merged  (worktree strategy with merge step)
+dispatched → superseded    (new dispatch replaces stale one)
+```
 
 ## Quality Gates
 
-- Each task's **Verify** command runs automatically via TaskCompleted hook
+- Each task's **Verify** command runs automatically via TaskCompleted hook (per-task, not per-group)
 - File ownership violations are detected during merge
-- [VERIFY] checkpoint tasks are always executed sequentially
+- [VERIFY] checkpoint tasks are always executed by the lead sequentially
 - Full test suite runs after merge (if configured)
 
 ## Tips

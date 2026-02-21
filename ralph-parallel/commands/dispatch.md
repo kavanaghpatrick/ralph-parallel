@@ -215,37 +215,22 @@ Estimated speedup: ~2.5x (12 tasks across 3 parallel groups)
 
 If `--dry-run` flag present, STOP here. Do not generate team prompt.
 
-## Step 6: Generate Team Creation Prompt
+## Step 6: Clean Up Stale State and Write Dispatch State
 
-Build the natural-language prompt that creates the Agent Team.
-
-```text
-Team Prompt Generation:
-
-1. Read team prompt template from:
-   ${CLAUDE_PLUGIN_ROOT}/templates/team-prompt.md
-
-2. Read teammate prompt template from:
-   ${CLAUDE_PLUGIN_ROOT}/templates/teammate-prompt.md
-
-3. For each group, populate teammate template with:
-   - Group name
-   - Task list (full task blocks from tasks.md)
-   - Owned files list
-   - Dependencies on other groups
-   - Verify commands
-
-4. Assemble full team prompt:
-   - Lead instructions (coordination, quality gates)
-   - Per-teammate spawn instructions
-   - Completion criteria
-```
-
-### Write Dispatch State
-
-Save dispatch state for status tracking and merge:
+Before creating a new dispatch, handle any existing dispatch state.
 
 ```text
+Stale State Cleanup:
+
+1. Check if specs/$specName/.dispatch-state.json already exists
+2. If it exists:
+   a. Read current status
+   b. If "dispatched": Warn user "Previous dispatch found (from $dispatchedAt).
+      Marking as superseded." Set status to "superseded".
+   c. If "merging": Error "Merge in progress. Run /ralph-parallel:merge --abort first."
+   d. If "merged" or "superseded": OK, overwrite.
+3. Write NEW dispatch state:
+
 Write specs/$specName/.dispatch-state.json:
 {
   "dispatchedAt": "<ISO timestamp>",
@@ -259,46 +244,131 @@ Write specs/$specName/.dispatch-state.json:
 }
 ```
 
-## Step 7: Output Team Creation Prompt
+## Step 7: Create Team and Spawn Teammates
 
-Display the generated prompt for the user to paste into a new Claude Code session with Agent Teams enabled.
+Directly orchestrate parallel execution using Agent Teams.
 
 ```text
-Output:
+Team Creation (direct orchestration):
 
-Team prompt generated! To start parallel execution:
+1. Use TeamCreate to create team named "$specName-parallel"
+   - description: "Parallel execution of $specName spec"
 
-1. Open a NEW Claude Code session
-2. Paste the following prompt:
+2. Create TaskList entries for coordination:
+   - One task per group (e.g., "Group 1: data-models (tasks 1.1, 1.2)")
+   - One task per [VERIFY] checkpoint (blocked by group tasks)
+   - One task per serial task (blocked by verify checkpoints)
+   - Set blockedBy dependencies:
+     - [VERIFY] tasks are blockedBy ALL group tasks
+     - Serial tasks are blockedBy verify tasks
+     - Phase 2 group tasks are blockedBy Phase 1 verify task
 
-━━━ COPY BELOW THIS LINE ━━━
+3. Spawn teammates using Task tool (one per group, IN PARALLEL):
+   For each group, spawn with subagent_type="general-purpose":
+   - name: group name (e.g., "data-models")
+   - team_name: "$specName-parallel"
+   - mode: bypassPermissions
+   - run_in_background: true
+   - prompt: Build inline from the group's task data (see Teammate Prompt below)
 
-[Generated team prompt content]
+4. Spawn ALL non-blocked teammates simultaneously.
+   For groups with Phase 2 tasks: instruct teammate to complete Phase 1
+   tasks first, then message lead and wait for Phase 1 verify before
+   proceeding to Phase 2 tasks.
+```
 
-━━━ COPY ABOVE THIS LINE ━━━
+### Teammate Prompt Construction
 
-3. The lead will spawn teammates and coordinate execution
-4. Run /ralph-parallel:status to monitor progress
-5. When complete, run /ralph-parallel:merge to integrate results
+For each teammate, construct the prompt inline (no template needed):
+
+```text
+You are the "$groupName" teammate for the $specName spec parallel execution.
+
+## Your Task (Task #$taskListId)
+Claim task #$taskListId via TaskUpdate (set owner, status to in_progress).
+Then execute these spec tasks IN ORDER:
+
+[For each task in group, include full task block from tasks.md:
+  ### Task X.Y: description
+  - Files: ...
+  - Do: ...
+  - Done when: ...
+  - Verify: ...
+  - Commit: ...
+]
+
+[If group has Phase 2 tasks, add:]
+NOTE: Task X.Y is Phase 2. After completing Phase 1 tasks, STOP and
+message the lead: "Phase 1 $groupName tasks complete, awaiting verify."
+Wait for the lead to confirm before proceeding.
+
+## File Ownership — STRICTLY ENFORCED
+You ONLY modify these files: [ownedFiles list]
+You may read other files but NEVER write outside your ownership list.
+Before writing ANY file, verify it is in your ownership list above.
+If you need changes to a file you don't own, message the lead —
+do NOT make the change yourself. Ownership violations will be
+detected during merge verification and may require rework.
+
+## Rules
+- For each task: implement → verify → commit → mark [x] in specs/$specName/tasks.md
+- After ALL tasks done, mark task #$taskListId as completed via TaskUpdate
+- Message the lead: "Group $groupName complete. All N tasks verified."
+- Working directory: $projectRoot
+```
+
+## Step 8: Lead Coordination Loop
+
+After spawning teammates, the lead coordinates the execution.
+
+```text
+Lead Coordination:
+
+1. MONITOR: Wait for teammate messages reporting completion.
+   - Teammates go idle after sending messages — this is normal.
+   - Track which groups have completed Phase 1 tasks.
+
+2. PHASE GATE: When ALL Phase 1 group tasks are done:
+   a. Run [VERIFY] checkpoint task (e.g., 1.8) yourself:
+      - Execute the verify command (npm test && npm run typecheck)
+      - Mark the verify TaskList entry as completed
+   b. Message teammates with Phase 2 tasks: "Phase 1 verified. Proceed."
+   c. Phase 2 TaskList entries auto-unblock via blockedBy dependencies.
+
+3. SERIAL TASKS: After all parallel Phase 2 tasks complete:
+   a. Execute serial tasks yourself (these span file ownership boundaries)
+   b. For each: implement → verify → commit → mark [x] in tasks.md
+
+4. FINAL VERIFY: Run final [VERIFY] checkpoint.
+
+5. CLEANUP:
+   a. Shut down remaining idle teammates via SendMessage shutdown_request
+   b. Update dispatch-state.json: status = "merged" (if file-ownership)
+      or leave as "dispatched" for worktree strategy (needs /merge)
+   c. Delete team via TeamDelete
+   d. Output: "ALL_PARALLEL_COMPLETE — $totalTasks tasks done."
 ```
 
 <mandatory>
 ## CRITICAL: Delegation Rules
 
 This command does ALL analysis itself (no subagent needed for task parsing/partitioning).
-The output is a PROMPT, not programmatic team creation — Agent Teams are created via natural language.
+Dispatch creates and orchestrates Agent Teams DIRECTLY using TeamCreate and Task tools.
 
 Do NOT:
-- Try to programmatically create Agent Teams (there is no API)
-- Modify tasks.md (read-only analysis)
-- Execute any tasks (that's what the team does)
-- Skip the partition display (user must see and approve)
+- Generate a prompt for the user to copy-paste (NEVER)
+- Modify tasks.md during analysis (read-only until execution)
+- Execute spec tasks yourself during dispatch (teammates do that)
+- Skip the partition display (user must see the plan)
 
 Do:
 - Read and analyze tasks.md thoroughly
 - Detect file conflicts and dependencies accurately
-- Generate clear, actionable teammate prompts
+- Use TeamCreate to create the team
+- Use Task tool to spawn teammates with inline prompts
+- Coordinate the execution loop as lead (verify checkpoints, serial tasks)
 - Save dispatch state for tracking
+- Clean up stale dispatch states before creating new ones
 </mandatory>
 
 ## Error Handling

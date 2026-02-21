@@ -1,81 +1,45 @@
-# Teammate Prompt Template
+# Teammate Prompt Reference
 
-This template is populated per-group by `/ralph-parallel:dispatch`.
+Reference guide for constructing per-group teammate prompts. Used by `/ralph-parallel:dispatch` Step 7 when spawning teammates.
 
-## Template
+## Prompt Structure
 
-```text
-You are a focused task executor for the "{{groupName}}" group of spec "{{specName}}".
+Each teammate prompt should include these sections:
 
-## Your Assignment
+### 1. Identity and Assignment
+- Teammate name matches group name (e.g., "data-models")
+- References the spec name and TaskList task ID
+- Claims the task via TaskUpdate
 
-Execute these tasks IN ORDER:
-{{#each tasks}}
+### 2. Task List
+- Full task blocks from tasks.md, in execution order
+- Each task includes: Files, Do steps, Done when, Verify command, Commit message
+- Phase 2 tasks are marked with a NOTE to wait for lead confirmation
 
-### Task {{id}}: {{description}}
-- **Do**: {{doSteps}}
-- **Files**: {{files}}
-- **Done when**: {{doneWhen}}
-- **Verify**: {{verify}}
-- **Commit**: {{commit}}
-{{/each}}
+### 3. File Ownership
+- Explicit list of ALL files the teammate may modify
+- Clear instruction: may READ any file, but NEVER WRITE outside ownership list
+- This is the primary enforcement mechanism for file-ownership strategy
 
-## Rules
+### 4. Execution Rules
+- For each task: implement → run verify → commit → mark [x] in tasks.md
+- After all tasks: mark TaskList entry as completed
+- Message lead with completion summary
 
-1. **File Ownership**: You ONLY modify these files:
-   {{ownedFiles}}
-   If you need to read other files, that's fine. But NEVER write to files
-   outside your ownership list.
+### 5. Communication Protocol
+- Message lead on completion: "Group $name complete. All N tasks verified."
+- Message lead on blockers: explain issue, do NOT modify other files
+- For Phase 2 tasks: pause and message lead after Phase 1 tasks complete
 
-2. **Execution**: For each task:
-   a. Read the Do steps carefully
-   b. Implement the changes
-   c. Run the Verify command to confirm
-   d. Commit with the specified message
-   e. Mark the task [x] in tasks.md
-   f. Update .progress.md with completion note
+## Key Fields Per Teammate
 
-3. **Verification**: ALWAYS run the Verify command. If it fails:
-   - Fix the issue
-   - Re-run verification
-   - Only mark complete when verification passes
-
-4. **Communication**: If you encounter a blocker:
-   - Message the lead explaining the issue
-   - Do NOT modify files outside your ownership
-   - Wait for lead guidance on cross-group issues
-
-5. **Completion**: After ALL your tasks are done:
-   - Verify all your tasks are marked [x]
-   - Message the lead: "Group {{groupName}} complete. All {{taskCount}} tasks verified."
-
-## Context
-
-Spec directory: specs/{{specName}}/
-Tasks file: specs/{{specName}}/tasks.md
-Progress file: specs/{{specName}}/.progress.md
-{{#if dependencies}}
-
-WARNING: Your group depends on {{dependencies}} completing first.
-The lead will spawn you only after those groups finish.
-Verify their tasks are marked [x] before starting.
-{{/if}}
-```
-
-## Variables
-
-| Variable | Source | Description |
-|----------|--------|-------------|
-| `{{groupName}}` | partition group name | Human-readable group identifier |
-| `{{specName}}` | dispatch state | Spec being executed |
-| `{{tasks}}` | partition group tasks | Array of task objects |
-| `{{tasks.*.id}}` | task | Task ID (e.g., "1.3") |
-| `{{tasks.*.description}}` | task | Task description text |
-| `{{tasks.*.doSteps}}` | task | Do section content |
-| `{{tasks.*.files}}` | task | Files list |
-| `{{tasks.*.doneWhen}}` | task | Done when criteria |
-| `{{tasks.*.verify}}` | task | Verify command |
-| `{{tasks.*.commit}}` | task | Commit message |
-| `{{ownedFiles}}` | partition group | All files this group owns |
-| `{{taskCount}}` | partition group | Number of tasks in group |
-| `{{dependencies}}` | partition group | Names of blocking groups |
+| Field | Source | Example |
+|-------|--------|---------|
+| Group name | Partition result | "data-models" |
+| Spec name | Dispatch state | "user-auth" |
+| TaskList ID | Created in Step 7 | "#1" |
+| Task list | tasks.md content | Full task blocks |
+| Owned files | Partition result | ["src/models/User.ts", ...] |
+| Dependencies | Partition result | [] or ["api-layer"] |
+| Task count | Partition result | 3 |
+| Working directory | Project root | /path/to/project |

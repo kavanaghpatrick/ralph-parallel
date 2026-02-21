@@ -20,6 +20,8 @@ INPUT=$(cat)
 # Parse fields using jq (matches documented TaskCompleted schema)
 TASK_ID=$(echo "$INPUT" | jq -r '.task_id // empty' 2>/dev/null) || TASK_ID=""
 TASK_SUBJECT=$(echo "$INPUT" | jq -r '.task_subject // empty' 2>/dev/null) || TASK_SUBJECT=""
+TASK_DESCRIPTION=$(echo "$INPUT" | jq -r '.task_description // empty' 2>/dev/null) || TASK_DESCRIPTION=""
+TEAM_NAME=$(echo "$INPUT" | jq -r '.team_name // empty' 2>/dev/null) || TEAM_NAME=""
 CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null) || CWD=""
 
 if [ -z "$TASK_ID" ]; then
@@ -34,40 +36,88 @@ else
   PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 fi
 
-# Find the spec directory with active dispatch
+# --- Spec Resolution ---
+# Priority 1: team_name (e.g., "user-auth-parallel" → "user-auth")
+# Priority 2: .current-spec file
+# Priority 3: first dispatched spec (last resort)
 SPEC_DIR=""
-for state_file in "$PROJECT_ROOT"/specs/*/.dispatch-state.json; do
-  [ -f "$state_file" ] || continue
-  STATUS=$(jq -r '.status // empty' "$state_file" 2>/dev/null) || continue
-  if [ "$STATUS" = "dispatched" ]; then
-    SPEC_DIR=$(dirname "$state_file")
-    break
+
+if [ -n "$TEAM_NAME" ]; then
+  SPEC_NAME="${TEAM_NAME%-parallel}"
+  if [ -d "$PROJECT_ROOT/specs/$SPEC_NAME" ]; then
+    SPEC_DIR="$PROJECT_ROOT/specs/$SPEC_NAME"
   fi
-done
+fi
+
+if [ -z "$SPEC_DIR" ] && [ -f "$PROJECT_ROOT/specs/.current-spec" ]; then
+  SPEC_NAME=$(tr -d '[:space:]' < "$PROJECT_ROOT/specs/.current-spec")
+  if [ -n "$SPEC_NAME" ] && [ -d "$PROJECT_ROOT/specs/$SPEC_NAME" ]; then
+    SPEC_DIR="$PROJECT_ROOT/specs/$SPEC_NAME"
+  fi
+fi
+
+if [ -z "$SPEC_DIR" ]; then
+  for state_file in "$PROJECT_ROOT"/specs/*/.dispatch-state.json; do
+    [ -f "$state_file" ] || continue
+    STATUS=$(jq -r '.status // empty' "$state_file" 2>/dev/null) || continue
+    if [ "$STATUS" = "dispatched" ]; then
+      SPEC_DIR=$(dirname "$state_file")
+      break
+    fi
+  done
+fi
 
 if [ -z "$SPEC_DIR" ] || [ ! -f "$SPEC_DIR/tasks.md" ]; then
-  # No active dispatch or no tasks.md — allow through
+  # No matching dispatch or no tasks.md — allow through
   exit 0
 fi
 
-# Extract verify command for this task from tasks.md
-# Look for the task ID line, then find the **Verify** bullet under it
+# --- Determine which spec task was just completed ---
+# Strategy: Look up the TaskList task_id in the dispatch state to find its spec task IDs.
+# The dispatch state maps group tasks to spec task IDs.
+# We find which group this task belongs to by checking task_subject or task_description
+# for spec task ID patterns (X.Y format).
+
+DISPATCH_STATE="$SPEC_DIR/.dispatch-state.json"
+COMPLETED_SPEC_TASK=""
+
+if [ -f "$DISPATCH_STATE" ]; then
+  # Extract the LAST spec task ID mentioned in the subject — this is the task just completed
+  # Task subjects like "Group 1: data-models (tasks 1.1, 1.2)" contain all group tasks,
+  # but task_description often has the specific task being completed.
+  # Best approach: check description first, then subject
+  if [ -n "$TASK_DESCRIPTION" ]; then
+    COMPLETED_SPEC_TASK=$(echo "$TASK_DESCRIPTION" | grep -oE '[0-9]+\.[0-9]+' | tail -1)
+  fi
+  if [ -z "$COMPLETED_SPEC_TASK" ] && [ -n "$TASK_SUBJECT" ]; then
+    # If subject has only one task ID, use it; otherwise allow through
+    TASK_IDS_IN_SUBJECT=$(echo "$TASK_SUBJECT" | grep -oE '[0-9]+\.[0-9]+' | sort -u)
+    TASK_COUNT=$(echo "$TASK_IDS_IN_SUBJECT" | wc -l | tr -d ' ')
+    if [ "$TASK_COUNT" = "1" ]; then
+      COMPLETED_SPEC_TASK="$TASK_IDS_IN_SUBJECT"
+    fi
+  fi
+fi
+
+if [ -z "$COMPLETED_SPEC_TASK" ]; then
+  # Can't determine specific task — allow through rather than block
+  exit 0
+fi
+
+# --- Extract verify command for this SINGLE task from tasks.md ---
 VERIFY_CMD=""
 IN_TASK=false
 
 while IFS= read -r line; do
-  # Check if this is our task line (match task ID at start of task bullet)
-  if echo "$line" | grep -qE "^\s*- \[.\] ${TASK_ID}\b"; then
+  if echo "$line" | grep -qE "^\s*- \[.\] ${COMPLETED_SPEC_TASK}\b"; then
     IN_TASK=true
     continue
   fi
 
-  # If we hit another task line, stop
   if [ "$IN_TASK" = true ] && echo "$line" | grep -qE "^\s*- \[.\] [0-9]"; then
     break
   fi
 
-  # Extract verify command
   if [ "$IN_TASK" = true ] && echo "$line" | grep -qE "\*\*Verify\*\*:"; then
     VERIFY_CMD=$(echo "$line" | sed 's/.*\*\*Verify\*\*:\s*//' | sed 's/`//g')
     break
@@ -81,14 +131,14 @@ fi
 
 # Run the verify command from project root
 cd "$PROJECT_ROOT"
-echo "ralph-parallel: Running verification for task $TASK_ID: $VERIFY_CMD" >&2
+echo "ralph-parallel: Verifying task $COMPLETED_SPEC_TASK: $VERIFY_CMD" >&2
 
 if eval "$VERIFY_CMD" >/dev/null 2>&1; then
   # Verification passed
   exit 0
 else
   # Verification failed — block task completion with feedback via stderr
-  echo "QUALITY GATE FAILED for task $TASK_ID ($TASK_SUBJECT)" >&2
+  echo "QUALITY GATE FAILED for task $COMPLETED_SPEC_TASK ($TASK_SUBJECT)" >&2
   echo "Verify command failed: $VERIFY_CMD" >&2
   echo "Fix the issues and mark the task complete again." >&2
   exit 2

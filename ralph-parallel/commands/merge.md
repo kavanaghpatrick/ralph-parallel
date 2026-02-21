@@ -24,6 +24,7 @@ From `$ARGUMENTS`, extract:
 3. Validate status field:
    - "dispatched" → proceed with merge
    - "merged" → "Already merged. Nothing to do."
+   - "superseded" → "This dispatch was superseded by a newer one. Nothing to merge."
    - "merging" + no --continue → "Merge in progress. Use --continue to resume or --abort to cancel."
 ```
 
@@ -76,6 +77,8 @@ there's no git merge needed. Instead, verify consistency:
    - Update .dispatch-state.json: status = "merged"
    - Update tasks.md: ensure all completed tasks marked [x]
    - Update .progress.md with parallel execution summary
+   - Note: session-setup.sh will detect "merged" status and restore
+     gc.auto on the next session start
 ```
 
 ## Step 4: Worktree Merge

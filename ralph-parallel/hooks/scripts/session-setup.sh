@@ -4,7 +4,7 @@
 #
 # Actions:
 # 1. Detect if we're in a git worktree (teammate context)
-# 2. Disable gc.auto if parallel dispatch is active
+# 2. Manage gc.auto based on dispatch state lifecycle
 # 3. Output context about active parallel dispatch
 
 set -euo pipefail
@@ -23,23 +23,32 @@ fi
 
 # Look for active dispatch state in any spec
 DISPATCH_ACTIVE=false
+ACTIVE_SPEC=""
 for state_file in "$GIT_ROOT"/specs/*/.dispatch-state.json; do
   if [ -f "$state_file" ]; then
-    STATUS=$(python3 -c "import json; print(json.load(open('$state_file'))['status'])" 2>/dev/null || echo "unknown")
+    STATUS=$(jq -r '.status // "unknown"' "$state_file" 2>/dev/null) || continue
     if [ "$STATUS" = "dispatched" ] || [ "$STATUS" = "merging" ]; then
       DISPATCH_ACTIVE=true
-      SPEC_NAME=$(basename "$(dirname "$state_file")")
+      ACTIVE_SPEC=$(basename "$(dirname "$state_file")")
       break
     fi
   fi
 done
 
-# If parallel dispatch is active, ensure gc.auto is disabled
+# Manage gc.auto based on dispatch lifecycle
 if [ "$DISPATCH_ACTIVE" = true ]; then
+  # Active dispatch — disable gc to prevent object deletion during parallel work
   CURRENT_GC=$(git config --get gc.auto 2>/dev/null || echo "default")
   if [ "$CURRENT_GC" != "0" ]; then
     git config gc.auto 0
-    echo "ralph-parallel: Set gc.auto=0 for active parallel dispatch ($SPEC_NAME)"
+    echo "ralph-parallel: Set gc.auto=0 for active parallel dispatch ($ACTIVE_SPEC)"
+  fi
+else
+  # No active dispatch — restore gc.auto if we previously disabled it
+  CURRENT_GC=$(git config --get gc.auto 2>/dev/null || echo "default")
+  if [ "$CURRENT_GC" = "0" ]; then
+    git config --unset gc.auto 2>/dev/null || true
+    echo "ralph-parallel: Restored gc.auto (no active dispatches)"
   fi
 fi
 
@@ -50,7 +59,7 @@ if [ "$IS_WORKTREE" = true ]; then
 fi
 
 if [ "$DISPATCH_ACTIVE" = true ]; then
-  echo "ralph-parallel: Active parallel dispatch for spec '$SPEC_NAME'"
+  echo "ralph-parallel: Active parallel dispatch for spec '$ACTIVE_SPEC'"
   echo "ralph-parallel: Run /ralph-parallel:status to see progress"
 fi
 
