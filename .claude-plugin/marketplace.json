@@ -1,0 +1,22 @@
+{
+  "name": "ralph-parallel",
+  "owner": {
+    "name": "patrickkavanagh"
+  },
+  "metadata": {
+    "description": "Parallel spec execution via Claude Code Agent Teams"
+  },
+  "plugins": [
+    {
+      "name": "ralph-parallel",
+      "description": "Parallel spec execution via Claude Code Agent Teams. Analyzes tasks from ralph-specum specs, partitions into parallelizable groups, and dispatches to Agent Teams teammates.",
+      "version": "0.2.0",
+      "author": {
+        "name": "patrickkavanagh"
+      },
+      "source": "./plugins/ralph-parallel",
+      "category": "development",
+      "tags": ["ralph", "parallel", "agent-teams", "dispatch", "coordination"]
+    }
+  ]
+}
