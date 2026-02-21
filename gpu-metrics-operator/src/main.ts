@@ -12,12 +12,13 @@ import {
 import type { ChartContext } from './types';
 
 async function main(): Promise<void> {
-  const device = await initGPU();
-  if (!device) {
+  const maybeDevice = await initGPU();
+  if (!maybeDevice) {
     const fallback = document.getElementById('fallback');
     if (fallback) showFallback(fallback, 'WebGPU initialization failed.');
     return;
   }
+  const device: GPUDevice = maybeDevice;
 
   const format = navigator.gpu.getPreferredCanvasFormat();
 
