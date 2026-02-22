@@ -143,7 +143,7 @@ After POC validated, clean up code and add the verification script.
 
 ## Phase 3: Testing
 
-- [ ] 3.1 Test mark-tasks-complete.py with synthetic data
+- [x] 3.1 Test mark-tasks-complete.py with synthetic data
   - **Do**:
     1. Create test in `ralph-parallel/scripts/test_mark_tasks_complete.py`
     2. Test case 1: Normal completion -- 2 groups completed, 4 tasks marked
@@ -157,7 +157,7 @@ After POC validated, clean up code and add the verification script.
   - **Verify**: `python3 -m pytest /Users/patrickkavanagh/parallel_ralph/ralph-parallel/scripts/test_mark_tasks_complete.py -v`
   - **Commit**: `test(quality): add tests for mark-tasks-complete.py`
 
-- [ ] 3.2 Test verify-commit-provenance.py with synthetic git log
+- [x] 3.2 Test verify-commit-provenance.py with synthetic git log
   - **Do**:
     1. Create test in `ralph-parallel/scripts/test_verify_commit_provenance.py`
     2. Test case 1: All commits have proper trailers
