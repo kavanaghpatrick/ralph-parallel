@@ -197,7 +197,7 @@ After POC validated, clean up code and add the verification script.
 
 ## Phase 5: Marketplace Polish
 
-- [ ] 5.1 Add LICENSE file to marketplace repo root
+- [x] 5.1 Add LICENSE file to marketplace repo root
   - **Do**:
     1. Create `LICENSE` at `/Users/patrickkavanagh/ralph-parallel-marketplace/LICENSE` with MIT license text
     2. Author: "Patrick Kavanagh", year: 2026
