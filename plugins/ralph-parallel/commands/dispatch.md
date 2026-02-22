@@ -158,6 +158,7 @@ Spawn via Task tool with the script's stdout as the prompt:
 - team_name: "$specName-parallel"
 - mode: bypassPermissions
 - run_in_background: true
+- **DO NOT set `isolation: "worktree"`** — file-ownership strategy requires all teammates to work in the SAME directory (the project root). Using isolation:worktree creates separate git worktrees that diverge from main and never get merged back. Only the `--strategy worktree` dispatch path (Phase 2, not yet implemented) should use worktree isolation.
 
 Spawn ALL non-blocked groups simultaneously (parallel Task calls).
 
