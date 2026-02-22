@@ -68,7 +68,10 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/parse-and-partition.py \
 - 1: tasks.md format error → Display stderr diagnostics (parse-and-partition.py now reports specific format issues with line numbers and fix suggestions). Do NOT just say "Run /ralph-specum:tasks" — the diagnostics will indicate the actual problem.
 - 2: All complete → "All tasks complete. Nothing to dispatch."
 - 3: Single task → "Only 1 task remaining. Run /ralph-specum:implement instead."
-- 4: Circular deps → "Unresolvable circular file dependencies."
+- 4: Circular deps → Offer the user a choice:
+  - **Option A**: Re-run with `--strategy worktree` (each teammate gets isolated branch, requires /merge after)
+  - **Option B**: Serialize the overlapping tasks (run them sequentially, not in parallel)
+  - If the user chooses worktree: re-run parse-and-partition.py with `--strategy worktree`, then update $strategy to "worktree" and continue from Step 3. The dispatch-state.json MUST reflect the actual strategy used.
 
 ## Step 3: Display Partition Plan
 
@@ -158,7 +161,9 @@ Spawn via Task tool with the script's stdout as the prompt:
 - team_name: "$specName-parallel"
 - mode: bypassPermissions
 - run_in_background: true
-- **DO NOT set `isolation: "worktree"`** — file-ownership strategy requires all teammates to work in the SAME directory (the project root). Using isolation:worktree creates separate git worktrees that diverge from main and never get merged back. Only the `--strategy worktree` dispatch path (Phase 2, not yet implemented) should use worktree isolation.
+- **isolation parameter**: Read `strategy` from dispatch-state.json:
+  - If `"file-ownership"`: **DO NOT** set `isolation: "worktree"`. All teammates work in the same project root directory. Worktree isolation would create divergent branches that never get merged.
+  - If `"worktree"`: **DO** set `isolation: "worktree"`. Each teammate gets an isolated git worktree branch. Requires `/ralph-parallel:merge` after all agents complete.
 
 Spawn ALL non-blocked groups simultaneously (parallel Task calls).
 
