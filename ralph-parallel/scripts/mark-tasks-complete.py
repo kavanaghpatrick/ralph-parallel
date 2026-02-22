@@ -6,14 +6,16 @@ Reads dispatch-state.json's completedGroups and groups arrays, maps group
 names to task IDs, then updates tasks.md checkboxes from [ ] to [x].
 
 Usage:
-    python3 mark-tasks-complete.py --dispatch-state <path> --tasks-md <path>
+    python3 mark-tasks-complete.py --dispatch-state <path> --tasks-md <path> [--dry-run]
 
 Exit codes:
-    0 = always (informational, never blocks)
+    0 = success (including no-op cases like missing completedGroups/groups)
+    1 = tasks.md file not found
 """
 
 import argparse
 import json
+import os
 import re
 import sys
 
@@ -25,6 +27,8 @@ def main():
                         help='Path to dispatch-state.json')
     parser.add_argument('--tasks-md', required=True,
                         help='Path to tasks.md')
+    parser.add_argument('--dry-run', action='store_true',
+                        help='Print what would be changed without writing')
     args = parser.parse_args()
 
     # Read dispatch-state.json
@@ -36,10 +40,16 @@ def main():
                           "alreadyComplete": 0, "notFound": 0}))
         sys.exit(0)
 
+    # Edge case: missing completedGroups key -- default to empty list
     completed_groups = state.get('completedGroups', [])
-    groups = state.get('groups', [])
 
-    if not completed_groups or not groups:
+    # Edge case: missing groups key -- exit 0 with empty result
+    groups = state.get('groups', [])
+    if not groups:
+        print(json.dumps({"marked": 0, "alreadyComplete": 0, "notFound": 0}))
+        sys.exit(0)
+
+    if not completed_groups:
         print(json.dumps({"marked": 0, "alreadyComplete": 0, "notFound": 0}))
         sys.exit(0)
 
@@ -58,14 +68,16 @@ def main():
         print(json.dumps({"marked": 0, "alreadyComplete": 0, "notFound": 0}))
         sys.exit(0)
 
-    # Read tasks.md
-    try:
-        with open(args.tasks_md, 'r') as f:
-            content = f.read()
-    except FileNotFoundError:
+    # Edge case: tasks.md doesn't exist -- exit 1 with error message
+    if not os.path.isfile(args.tasks_md):
+        print(f"Error: tasks.md not found: {args.tasks_md}", file=sys.stderr)
         print(json.dumps({"error": f"tasks.md not found: {args.tasks_md}",
                           "marked": 0, "alreadyComplete": 0, "notFound": 0}))
-        sys.exit(0)
+        sys.exit(1)
+
+    # Read tasks.md
+    with open(args.tasks_md, 'r') as f:
+        content = f.read()
 
     marked = 0
     already_complete = 0
@@ -75,7 +87,7 @@ def main():
         # Escape dots in task ID for regex
         escaped_id = re.escape(task_id)
 
-        # Check if already marked complete
+        # Idempotency: already-marked [x] tasks increment alreadyComplete counter
         already_pattern = re.compile(
             rf'^- \[x\] {escaped_id}\b', re.MULTILINE)
         if already_pattern.search(content):
@@ -91,10 +103,11 @@ def main():
             content = new_content
             marked += count
         else:
+            # Edge case: task ID in completedGroups but regex doesn't match
             not_found += 1
 
-    # Write updated content back
-    if marked > 0:
+    # Write updated content back (unless --dry-run)
+    if marked > 0 and not args.dry_run:
         with open(args.tasks_md, 'w') as f:
             f.write(content)
 
@@ -103,6 +116,8 @@ def main():
         "alreadyComplete": already_complete,
         "notFound": not_found,
     }
+    if args.dry_run:
+        result["dryRun"] = True
     print(json.dumps(result))
     sys.exit(0)
 
