@@ -58,7 +58,7 @@ Focus: Move anti-pattern enforcement from prose instructions to code that blocks
   - **Verify**: `python3 -c "import ast; ast.parse(open('/Users/patrickkavanagh/parallel_ralph/ralph-parallel/scripts/validate-tasks-format.py').read())"` exits 0, and `echo '# Tasks\n- [ ] 1.1 Foo\n  - **Verify**: \x60cargo test\x60' | python3 /Users/patrickkavanagh/parallel_ralph/ralph-parallel/scripts/validate-tasks-format.py --tasks-md /dev/stdin --require-quality-commands; test $? -eq 2`
   - **Commit**: `feat(quality): require Quality Commands section in tasks.md`
 
-- [ ] 3.3 Create capture-baseline.sh standalone script
+- [x] 3.3 Create capture-baseline.sh standalone script
   - **Do**:
     1. Create `scripts/capture-baseline.sh` — standalone script replacing dispatch.md Step 4.5 prose:
        - Input: `--dispatch-state <path>` (reads qualityCommands.test from it)
