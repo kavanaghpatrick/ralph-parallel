@@ -286,6 +286,10 @@ fi
 
 # --- Stage 6: Periodic lint check ---
 LINT_CMD=$(jq -r '.qualityCommands.lint // empty' "$DISPATCH_STATE" 2>/dev/null || true)
+# Guard against jq returning literal "null" string
+if [ "$LINT_CMD" = "null" ]; then
+  LINT_CMD=""
+fi
 LINT_INTERVAL=${LINT_INTERVAL:-3}
 
 if [ -n "$LINT_CMD" ]; then
@@ -298,14 +302,14 @@ if [ -n "$LINT_CMD" ]; then
     echo "ralph-parallel: Running periodic lint check ($COMPLETED_COUNT tasks done): $LINT_CMD" >&2
     LINT_OUTPUT=$(eval "$LINT_CMD" 2>&1) && LINT_EXIT=0 || LINT_EXIT=$?
     if [ $LINT_EXIT -ne 0 ]; then
-      echo "SUPPLEMENTAL CHECK FAILED: lint" >&2
+      echo "SUPPLEMENTAL CHECK FAILED: lint (periodic, every ${LINT_INTERVAL} tasks)" >&2
       echo "Command: $LINT_CMD (exit $LINT_EXIT)" >&2
       echo "--- Output (last 30 lines) ---" >&2
       echo "$LINT_OUTPUT" | tail -30 >&2
       echo "Fix lint errors before marking task complete." >&2
       exit 2
     fi
-    echo "ralph-parallel: Lint check passed" >&2
+    echo "ralph-parallel: Lint check passed ($COMPLETED_COUNT tasks done)" >&2
   fi
 fi
 
