@@ -1,7 +1,7 @@
 ---
 spec: quality-gates-v2
 phase: tasks
-total_tasks: 15
+total_tasks: 17
 created: 2026-02-22
 generated: auto
 ---
@@ -18,7 +18,7 @@ generated: auto
 
 Focus: Get all 3 fixes working end-to-end. Skip tests, accept rough edges.
 
-- [ ] 1.1 Add Stage 6 lint check to task-completed-gate.sh
+- [x] 1.1 Add Stage 6 lint check to task-completed-gate.sh
   - **Do**:
     1. Read `ralph-parallel/hooks/scripts/task-completed-gate.sh`
     2. After Stage 5 (test suite regression check, ends around line 285), add Stage 6: Periodic lint check
@@ -195,9 +195,54 @@ After POC validated, clean up code and add the verification script.
   - **Verify**: `grep -c 'Stage 6' /Users/patrickkavanagh/parallel_ralph/ralph-parallel/hooks/scripts/task-completed-gate.sh && grep -c 'mark-tasks-complete' /Users/patrickkavanagh/parallel_ralph/ralph-parallel/commands/dispatch.md && grep -c 'Signed-off-by' /Users/patrickkavanagh/parallel_ralph/ralph-parallel/scripts/build-teammate-prompt.py`
   - **Commit**: `feat(quality-gates-v2): all fixes verified`
 
+## Phase 5: Marketplace Polish
+
+- [ ] 5.1 Add LICENSE file to marketplace repo root
+  - **Do**:
+    1. Create `LICENSE` at `/Users/patrickkavanagh/ralph-parallel-marketplace/LICENSE` with MIT license text
+    2. Author: "Patrick Kavanagh", year: 2026
+  - **Files**: `/Users/patrickkavanagh/ralph-parallel-marketplace/LICENSE`
+  - **Done when**: LICENSE file exists with MIT text
+  - **Verify**: `head -1 /Users/patrickkavanagh/ralph-parallel-marketplace/LICENSE`
+  - **Commit**: `docs: add MIT LICENSE file`
+
+- [ ] 5.2 Add CHANGELOG.md to marketplace repo root
+  - **Do**:
+    1. Create `CHANGELOG.md` at `/Users/patrickkavanagh/ralph-parallel-marketplace/CHANGELOG.md`
+    2. Start with `# Changelog` header
+    3. Add `## [0.2.0] - 2026-02-22` section with grouped changes: Added (baseline snapshot, validate-tasks-format, worktree strategy, lint gate, task writeback, commit provenance), Fixed (stale cache symlink, worktree isolation bug, INVALID display bug, --strategy flag wiring)
+    4. Add `## [0.1.0] - 2026-02-20` section: Initial release with dispatch, status, merge commands
+  - **Files**: `/Users/patrickkavanagh/ralph-parallel-marketplace/CHANGELOG.md`
+  - **Done when**: CHANGELOG exists with both versions documented
+  - **Verify**: `grep -c '0.2.0' /Users/patrickkavanagh/ralph-parallel-marketplace/CHANGELOG.md`
+  - **Commit**: `docs: add CHANGELOG.md`
+
+- [ ] 5.3 Enrich plugin.json and add plugin-level README
+  - **Do**:
+    1. Read `/Users/patrickkavanagh/ralph-parallel-marketplace/plugins/ralph-parallel/.claude-plugin/plugin.json`
+    2. Add `"homepage"` and `"repository"` fields
+    3. Create `/Users/patrickkavanagh/ralph-parallel-marketplace/plugins/ralph-parallel/README.md` with: overview, commands table (dispatch/status/merge), hooks table (4 hooks), scripts table (8 scripts), quick start example
+  - **Files**: `/Users/patrickkavanagh/ralph-parallel-marketplace/plugins/ralph-parallel/.claude-plugin/plugin.json`, `/Users/patrickkavanagh/ralph-parallel-marketplace/plugins/ralph-parallel/README.md`
+  - **Done when**: plugin.json has homepage/repository, README exists with commands/hooks/scripts tables
+  - **Verify**: `python3 -c "import json; d=json.load(open('/Users/patrickkavanagh/ralph-parallel-marketplace/plugins/ralph-parallel/.claude-plugin/plugin.json')); assert 'homepage' in d"`
+  - **Commit**: `docs: enrich plugin.json and add plugin-level README`
+
+- [ ] 5.4 [VERIFY] Marketplace polish checkpoint
+  - **Do**: Verify all marketplace files:
+    1. LICENSE exists at repo root
+    2. CHANGELOG.md exists with 0.2.0 section
+    3. plugin.json has homepage field
+    4. Plugin README exists
+    5. Push to GitHub
+  - **Files**: All marketplace files
+  - **Done when**: All files verified and pushed
+  - **Verify**: `ls /Users/patrickkavanagh/ralph-parallel-marketplace/LICENSE /Users/patrickkavanagh/ralph-parallel-marketplace/CHANGELOG.md /Users/patrickkavanagh/ralph-parallel-marketplace/plugins/ralph-parallel/README.md`
+  - **Commit**: `chore(marketplace): polish for public distribution`
+
 ## Notes
 
 - **POC shortcuts taken**: verify-commit-provenance.py deferred to Phase 2; edge case hardening deferred to Phase 2
 - **Production TODOs**: Consider making lint blocking (not periodic) in a future version if teams want stricter enforcement
 - **No automated test suite for plugin**: Verification relies on ast.parse, bash -n, and grep-based content checks. Phase 3 adds targeted unit tests for new scripts only.
 - **Backward compatibility**: All 3 fixes are additive. Dispatches without lint commands, without completedGroups, or without Signed-off-by trailers continue to work.
+- **Marketplace polish**: LICENSE, CHANGELOG, plugin.json enrichment, plugin README. Skipped agents/ and schemas/ directories (see audit evaluation).
