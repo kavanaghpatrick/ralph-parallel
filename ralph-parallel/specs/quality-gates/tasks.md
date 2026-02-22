@@ -87,7 +87,7 @@ Focus: Move anti-pattern enforcement from prose instructions to code that blocks
 
 Focus: Fix all CRITICAL and HIGH issues found by 5 parallel audit agents. No new features — only correctness fixes.
 
-- [ ] 4.1 Fix _cmds_overlap prefix matching and command splitting in validate-tasks-format.py
+- [x] 4.1 Fix _cmds_overlap prefix matching and command splitting in validate-tasks-format.py
   **Do**:
   1. Read `scripts/validate-tasks-format.py`
   2. Fix `_cmds_overlap()`: Replace prefix matching (`a.startswith(b)`) with exact first-token matching — split both commands on whitespace, compare first tokens for equality. Only match if the base command is identical (e.g., `cargo build` should NOT match `cargo build --release` as "overlapping" in the wrong direction — but `cargo build --release` SHOULD match against declared `cargo build`)

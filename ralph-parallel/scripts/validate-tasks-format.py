@@ -176,14 +176,30 @@ def _normalize_cmd(cmd: str) -> str:
 
 
 def _cmds_overlap(cmd_a: str, cmd_b: str) -> bool:
-    """Check if two commands are essentially the same (after normalization)."""
+    """Check if two commands share the same base command (first token comparison).
+
+    Splits both commands on whitespace and compares the first token (the binary/tool).
+    If the base commands match, they overlap regardless of flags.
+    e.g., 'cargo build' overlaps 'cargo build --release' (same base: 'cargo')
+    e.g., 'cargo build' does NOT overlap 'cargo test' (different second token when present)
+    """
     a = _normalize_cmd(cmd_a)
     b = _normalize_cmd(cmd_b)
-    # Exact match or one is a prefix of the other
-    return a == b or a.startswith(b) or b.startswith(a)
+    tokens_a = a.split()
+    tokens_b = b.split()
+    if not tokens_a or not tokens_b:
+        return False
+    # Compare first token (the executable)
+    if tokens_a[0] != tokens_b[0]:
+        return False
+    # If either command is just the executable (one token), match on that alone
+    if len(tokens_a) == 1 or len(tokens_b) == 1:
+        return True
+    # Both have subcommands — compare second token (e.g., build vs test)
+    return tokens_a[1] == tokens_b[1]
 
 
-def validate_verify_commands(task_blocks: list[dict], quality_commands: dict) -> list[dict]:
+def validate_verify_commands(task_blocks: list[dict], quality_commands: dict) -> tuple[list[dict], list[dict]]:
     """Validate verify commands against the project's declared quality commands.
 
     Uses the project's own Quality Commands section as source of truth.
@@ -192,8 +208,12 @@ def validate_verify_commands(task_blocks: list[dict], quality_commands: dict) ->
 
     This is ecosystem-agnostic: works for any language/toolchain because it
     compares against the project's own declared commands, not hardcoded patterns.
+
+    Returns:
+        (errors, warnings) tuple
     """
     errors = []
+    warnings = []
     exempt_re = re.compile(r'\b(config|docs|documentation|readme|changelog)\b', re.IGNORECASE)
 
     build_cmd = quality_commands.get('build', '')
@@ -201,13 +221,13 @@ def validate_verify_commands(task_blocks: list[dict], quality_commands: dict) ->
     test_cmd = quality_commands.get('test', '')
 
     # Skip check entirely if no test command declared (nothing to compare against)
-    if not test_cmd or test_cmd == 'N/A':
-        return errors
+    if not test_cmd or test_cmd.upper() == 'N/A':
+        return errors, warnings
 
     # Also need at least one of build/typecheck to detect "compile-only"
-    compile_cmds = [c for c in [build_cmd, typecheck_cmd] if c and c != 'N/A']
+    compile_cmds = [c for c in [build_cmd, typecheck_cmd] if c and c.upper() != 'N/A']
     if not compile_cmds:
-        return errors
+        return errors, warnings
 
     for block in task_blocks:
         desc = block.get('description', '')
@@ -217,11 +237,22 @@ def validate_verify_commands(task_blocks: list[dict], quality_commands: dict) ->
             continue
 
         verify_cmd = _extract_verify_cmd(block['body'])
-        if not verify_cmd:
+        if verify_cmd is None:
+            continue
+        if not verify_cmd.strip():
+            # Empty verify command — warn but don't error
+            warnings.append({
+                'line': block['start_line'],
+                'type': 'empty_verify',
+                'message': f"Task {block['id']} has an empty Verify command",
+            })
             continue
 
-        # Split on && to get individual commands
-        parts = [p.strip() for p in verify_cmd.split('&&')]
+        # Split on &&, ||, and ; to get individual commands
+        parts = re.split(r'\s*(?:&&|\|\||;)\s*', verify_cmd)
+        # For piped commands, only keep the first command (the tool, not grep/wc)
+        parts = [p.split('|')[0].strip() for p in parts]
+        parts = [p for p in parts if p]
 
         # Check: does the verify overlap with a compile command?
         matches_compile = any(
@@ -248,7 +279,7 @@ def validate_verify_commands(task_blocks: list[dict], quality_commands: dict) ->
                 'fix': f"Include test command: `{test_cmd}`",
             })
 
-    return errors
+    return errors, warnings
 
 
 def validate_quality_commands_section(content: str) -> tuple[dict, list, list]:
@@ -288,13 +319,13 @@ def validate_quality_commands_section(content: str) -> tuple[dict, list, list]:
         if field_match:
             parsed_commands[field.lower()] = field_match.group(1).strip()
         else:
-            na_match = re.search(rf'\*\*{field}\*\*:\s*N/A', section_text)
+            na_match = re.search(rf'\*\*{field}\*\*:\s*N/A', section_text, re.IGNORECASE)
             if na_match:
                 parsed_commands[field.lower()] = 'N/A'
 
     # Warn if Test is missing or N/A
     test_val = parsed_commands.get('test')
-    if not test_val or test_val == 'N/A':
+    if not test_val or test_val.upper() == 'N/A':
         warnings.append({
             'line': 0,
             'type': 'no_test_command',
@@ -375,8 +406,9 @@ def main():
     if args.check_verify_commands:
         lines_list = content.split('\n')
         task_blocks = _extract_task_blocks(lines_list)
-        verify_errors = validate_verify_commands(task_blocks, quality_commands)
+        verify_errors, verify_warnings = validate_verify_commands(task_blocks, quality_commands)
         result['errors'].extend(verify_errors)
+        result['warnings'].extend(verify_warnings)
         if verify_errors:
             result['valid'] = False
 
