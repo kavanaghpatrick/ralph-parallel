@@ -217,7 +217,7 @@ After POC validated, clean up code and add the verification script.
   - **Verify**: `grep -c '0.2.0' /Users/patrickkavanagh/ralph-parallel-marketplace/CHANGELOG.md`
   - **Commit**: `docs: add CHANGELOG.md`
 
-- [ ] 5.3 Enrich plugin.json and add plugin-level README
+- [x] 5.3 Enrich plugin.json and add plugin-level README
   - **Do**:
     1. Read `/Users/patrickkavanagh/ralph-parallel-marketplace/plugins/ralph-parallel/.claude-plugin/plugin.json`
     2. Add `"homepage"` and `"repository"` fields
