@@ -28,6 +28,23 @@ If `--abort`: skip to Abort Handler section below.
 4. Read .ralph-state.json — warn if not in execution/tasks phase
 ```
 
+## Step 1.5: Validate Task Format (via script)
+
+Before partitioning, validate that tasks.md is in the expected format:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/validate-tasks-format.py \
+  --tasks-md specs/$specName/tasks.md
+```
+
+**Exit codes**:
+- 0: Valid — continue to Step 2
+- 1: File not found or empty — "Run /ralph-specum:tasks to generate task list first."
+- 2: Format errors — display the diagnostic output to the user. The script reports exact line numbers and fix suggestions. Do NOT proceed to Step 2.
+- 3: Valid with warnings — display warnings, then continue to Step 2
+
+**On exit code 2**: The most common cause is the task-planner generating `## Task N:` headers instead of `- [ ] X.Y` checkboxes. The script will detect this and suggest the fix. Show the user the full diagnostic output and ask if they want to fix tasks.md before proceeding.
+
 ## Step 2: Analyze and Partition (via script)
 
 Run the analysis script — it handles task parsing, dependency graphs, and partitioning:
@@ -41,7 +58,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/parse-and-partition.py \
 
 **Exit codes**:
 - 0: Success — JSON partition on stdout. Save to a variable.
-- 1: tasks.md not found → "Run /ralph-specum:tasks to generate task list first."
+- 1: tasks.md format error → Display stderr diagnostics (parse-and-partition.py now reports specific format issues with line numbers and fix suggestions). Do NOT just say "Run /ralph-specum:tasks" — the diagnostics will indicate the actual problem.
 - 2: All complete → "All tasks complete. Nothing to dispatch."
 - 3: Single task → "Only 1 task remaining. Run /ralph-specum:implement instead."
 - 4: Circular deps → "Unresolvable circular file dependencies."
@@ -76,9 +93,42 @@ Display the output to the user. If `--dry-run`: STOP here.
      "serialTasks": <from partition JSON>,
      "verifyTasks": <from partition JSON>,
      "qualityCommands": <from partition JSON>,
+     "baselineSnapshot": null,
      "status": "dispatched",
      "completedGroups": []
    }
+```
+
+## Step 4.5: Capture Baseline Test Snapshot
+
+Before spawning teammates, capture the current test state for regression detection:
+
+```text
+1. Read qualityCommands.test from the dispatch-state.json just written
+2. If no test command (empty/null): skip — leave baselineSnapshot as null
+3. If test command exists:
+   a. Run the test command from project root, capture stdout+stderr
+   b. Record the exit code
+   c. Parse test count from output using this regex cascade:
+      - Jest/Vitest: /Tests:\s+(\d+) passed/ or /(\d+) passed/
+      - Pytest: /(\d+) passed/
+      - Cargo test: /test result:.*(\d+) passed/
+      - Go test: count lines matching /^ok\s+/
+      - Generic fallback: count lines containing "pass", "ok", or "✓"
+   d. If test command FAILS (exit != 0):
+      - WARN user: "⚠ Baseline tests failing — teammates will inherit broken tests"
+      - Set testCount to -1 (signals pre-existing failure)
+      - Continue dispatch (do NOT block)
+   e. If output is unparseable (no count extracted):
+      - Set testCount to -1
+      - Log: "Could not parse test count from output"
+   f. Update dispatch-state.json:
+      "baselineSnapshot": {
+        "testCount": N,
+        "capturedAt": "<ISO timestamp>",
+        "command": "<test command>",
+        "exitCode": N
+      }
 ```
 
 ## Step 5: Create Team and TaskList
@@ -99,6 +149,12 @@ For each group in the partition, generate a prompt and spawn:
 
 Extract `QUALITY_COMMANDS_JSON` from the partition JSON's `qualityCommands` field (as a JSON string).
 
+Extract `BASELINE_TEST_COUNT` from dispatch-state.json's `baselineSnapshot.testCount` field (default 0 if missing or null):
+
+```bash
+BASELINE_TEST_COUNT=$(jq -r '.baselineSnapshot.testCount // 0' specs/$specName/.dispatch-state.json 2>/dev/null || echo 0)
+```
+
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/build-teammate-prompt.py \
   --partition-file /tmp/$specName-partition.json \
@@ -106,7 +162,8 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/build-teammate-prompt.py \
   --spec-name $specName \
   --project-root $projectRoot \
   --task-ids "#$id1,#$id2,..." \
-  --quality-commands "$QUALITY_COMMANDS_JSON"
+  --quality-commands "$QUALITY_COMMANDS_JSON" \
+  --baseline-test-count $BASELINE_TEST_COUNT
 ```
 
 Spawn via Task tool with the script's stdout as the prompt:
@@ -192,10 +249,11 @@ Do:
 
 | Error | Action |
 |-------|--------|
-| Script exit 1 | "Run /ralph-specum:tasks to generate task list first." |
-| Script exit 2 | "All tasks already complete. Nothing to dispatch." |
-| Script exit 3 | "Only 1 task remaining. Run /ralph-specum:implement instead." |
-| Script exit 4 | "Circular file dependencies. Consider serializing or splitting files." |
+| Validate exit 2 | Format errors detected — show diagnostics, ask user to fix tasks.md |
+| Partition exit 1 | Format error — show stderr diagnostics (specific line numbers and fixes) |
+| Partition exit 2 | "All tasks already complete. Nothing to dispatch." |
+| Partition exit 3 | "Only 1 task remaining. Run /ralph-specum:implement instead." |
+| Partition exit 4 | "Circular file dependencies. Consider serializing or splitting files." |
 | Script not found | "Plugin scripts missing. Reinstall ralph-parallel." |
 
 ## Worktree Strategy (Phase 2)

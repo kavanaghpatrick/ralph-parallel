@@ -704,6 +704,84 @@ def format_plan(result: dict) -> str:
 
 
 # ──────────────────────────────────────────────────────────────────
+# Format Diagnostics
+# ──────────────────────────────────────────────────────────────────
+
+def diagnose_format(content: str, path: Path) -> None:
+    """When no tasks are found, diagnose WHY and print actionable fixes."""
+    lines = content.strip().split('\n')
+    if not lines or not content.strip():
+        print(f"Error: {path} is empty.", file=sys.stderr)
+        return
+
+    issues = []
+
+    # Detect common wrong formats
+    header_tasks = []
+    bare_checkboxes = []
+    near_miss_ids = []
+
+    for i, line in enumerate(lines, 1):
+        # Common LLM format: ## Task N: or ### Task N:
+        if re.match(r'^#{2,3}\s+Task\s+\d+', line):
+            header_tasks.append(i)
+
+        # Checkbox without X.Y ID: - [ ] Some description
+        if re.match(r'^- \[.\]\s+(?!\d+\.\d+)', line):
+            bare_checkboxes.append(i)
+
+        # Has X.Y but wrong checkbox: * [x] 1.1 or - [✓] 1.1
+        if re.match(r'^[*-]\s*\[.\]\s*\d+\.\d+', line) and not re.match(r'^- \[.\]\s*\d+\.\d+', line):
+            near_miss_ids.append(i)
+
+        # Numbered list: 1. Task description (no checkbox)
+        if re.match(r'^\d+\.\s+(?!.*\*\*)', line) and i < 20:
+            # Only flag in first 20 lines to avoid matching Do: steps
+            pass
+
+    print(f"Error: No parseable tasks found in {path}", file=sys.stderr)
+    print("", file=sys.stderr)
+
+    if header_tasks:
+        print(f"FOUND: {len(header_tasks)} task(s) using '## Task N:' header format (lines: {', '.join(str(l) for l in header_tasks[:5])})", file=sys.stderr)
+        print("  FIX: Use checkbox format instead:", file=sys.stderr)
+        print("    WRONG:  ## Task 1: Implement feature", file=sys.stderr)
+        print("    RIGHT:  - [ ] 1.1 Implement feature", file=sys.stderr)
+        issues.append("header_format")
+
+    if bare_checkboxes:
+        print(f"FOUND: {len(bare_checkboxes)} checkbox(es) without X.Y task IDs (lines: {', '.join(str(l) for l in bare_checkboxes[:5])})", file=sys.stderr)
+        print("  FIX: Add phase.sequence ID after checkbox:", file=sys.stderr)
+        print("    WRONG:  - [ ] Implement feature", file=sys.stderr)
+        print("    RIGHT:  - [ ] 1.1 Implement feature", file=sys.stderr)
+        issues.append("missing_task_id")
+
+    if near_miss_ids:
+        print(f"FOUND: {len(near_miss_ids)} near-match(es) with wrong list marker (lines: {', '.join(str(l) for l in near_miss_ids[:5])})", file=sys.stderr)
+        print("  FIX: Use '- [ ]' with exactly one space after dash:", file=sys.stderr)
+        print("    WRONG:  * [x] 1.1 Task", file=sys.stderr)
+        print("    RIGHT:  - [x] 1.1 Task", file=sys.stderr)
+        issues.append("wrong_list_marker")
+
+    if not issues:
+        print("The file has content but no recognizable task format.", file=sys.stderr)
+        print("", file=sys.stderr)
+        print("Expected format:", file=sys.stderr)
+        print("  - [ ] 1.1 [P] Task description", file=sys.stderr)
+        print("    - **Do**:", file=sys.stderr)
+        print("      1. Step one", file=sys.stderr)
+        print("    - **Files**: `path/to/file`", file=sys.stderr)
+        print("    - **Done when**: Criteria", file=sys.stderr)
+        print("    - **Verify**: `test command`", file=sys.stderr)
+        print("    - **Commit**: `feat(scope): description`", file=sys.stderr)
+
+    print("", file=sys.stderr)
+    print("Required task line format: - [ ] X.Y [optional markers] Description", file=sys.stderr)
+    print("  X = phase number (1, 2, 3...), Y = task sequence (1, 2, 3...)", file=sys.stderr)
+    print("  Markers: [P] = parallelizable, [VERIFY] = quality checkpoint", file=sys.stderr)
+
+
+# ──────────────────────────────────────────────────────────────────
 # Main
 # ──────────────────────────────────────────────────────────────────
 
@@ -724,7 +802,7 @@ def main():
 
     tasks = parse_tasks(content)
     if not tasks:
-        print("Error: No tasks found in tasks.md", file=sys.stderr)
+        diagnose_format(content, tasks_path)
         sys.exit(1)
 
     tasks = build_dependency_graph(tasks)

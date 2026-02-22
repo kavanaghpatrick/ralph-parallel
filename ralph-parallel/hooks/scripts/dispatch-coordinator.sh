@@ -32,15 +32,31 @@ fi
 
 # Check if we're in an active team
 TEAM_NAME="${CLAUDE_CODE_TEAM_NAME:-}"
-if [ -z "$TEAM_NAME" ]; then
-  # No team active — allow stop
-  exit 0
-fi
 
-# Derive spec name from team name
-SPEC_NAME="${TEAM_NAME%-parallel}"
-SPEC_DIR="$PROJECT_ROOT/specs/$SPEC_NAME"
-DISPATCH_STATE="$SPEC_DIR/.dispatch-state.json"
+if [ -n "$TEAM_NAME" ]; then
+  # Derive spec name from team name
+  SPEC_NAME="${TEAM_NAME%-parallel}"
+  SPEC_DIR="$PROJECT_ROOT/specs/$SPEC_NAME"
+  DISPATCH_STATE="$SPEC_DIR/.dispatch-state.json"
+else
+  # No team context (session restart?) — scan for active dispatches
+  DISPATCH_STATE=""
+  SPEC_NAME=""
+  for state_file in "$PROJECT_ROOT"/specs/*/.dispatch-state.json; do
+    if [ -f "$state_file" ]; then
+      FILE_STATUS=$(jq -r '.status // "unknown"' "$state_file" 2>/dev/null) || continue
+      if [ "$FILE_STATUS" = "dispatched" ]; then
+        DISPATCH_STATE="$state_file"
+        SPEC_NAME=$(basename "$(dirname "$state_file")")
+        SPEC_DIR="$PROJECT_ROOT/specs/$SPEC_NAME"
+        break
+      fi
+    fi
+  done
+  if [ -z "$DISPATCH_STATE" ]; then
+    exit 0
+  fi
+fi
 
 if [ ! -f "$DISPATCH_STATE" ]; then
   exit 0
@@ -79,7 +95,35 @@ fi
 GROUP_NAMES=$(jq -r '[.groups[].name] | join(", ")' "$DISPATCH_STATE" 2>/dev/null) || GROUP_NAMES="unknown"
 COMPLETED_LIST=$(jq -r '(.completedGroups // []) | join(", ")' "$DISPATCH_STATE" 2>/dev/null) || COMPLETED_LIST="none"
 
-cat >&2 <<PROMPT
+# Check if team still exists
+TEAM_CONFIG="$HOME/.claude/teams/${SPEC_NAME}-parallel/config.json"
+TEAM_LOST=false
+if [ ! -f "$TEAM_CONFIG" ]; then
+  TEAM_LOST=true
+else
+  MEMBER_COUNT=$(jq '.members | length' "$TEAM_CONFIG" 2>/dev/null) || MEMBER_COUNT=0
+  if [ "$MEMBER_COUNT" -eq 0 ]; then
+    TEAM_LOST=true
+  fi
+fi
+
+if [ "$TEAM_LOST" = true ]; then
+  cat >&2 <<PROMPT
+ACTIVE DISPATCH DETECTED — TEAMMATES LOST
+
+Spec: $SPEC_NAME
+Status: $COMPLETED_GROUPS/$TOTAL_GROUPS groups complete
+Groups: $GROUP_NAMES
+Completed: $COMPLETED_LIST
+
+The team no longer exists but the dispatch is still active.
+You MUST re-run /ralph-parallel:dispatch to re-spawn teammates.
+Do NOT execute the remaining tasks yourself — that defeats parallel execution.
+
+The dispatch command will detect the existing state and resume from where it left off.
+PROMPT
+else
+  cat >&2 <<PROMPT
 You are coordinating a parallel dispatch for spec '$SPEC_NAME'.
 
 STATUS: $COMPLETED_GROUPS/$TOTAL_GROUPS groups complete
@@ -89,10 +133,11 @@ Completed: $COMPLETED_LIST
 NEXT ACTIONS:
 1. Check TaskList for teammate progress
 2. If waiting for teammates: they may be idle — check and send status messages
-3. When all Phase 1 tasks done: run the verify checkpoint yourself
+3. When all Phase N tasks done: run the verify checkpoint yourself
 4. When all tasks done: update dispatch-state.json status to "merged", shut down teammates, TeamDelete
 
 Do NOT stop until all tasks are complete and the team is cleaned up.
 PROMPT
+fi
 
 exit 2
