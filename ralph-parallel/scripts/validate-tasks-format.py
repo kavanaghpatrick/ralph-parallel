@@ -273,6 +273,80 @@ def validate_verify_commands(task_blocks: list[dict]) -> list[dict]:
     return errors
 
 
+def validate_quality_commands_section(content: str) -> tuple[dict, list, list]:
+    """Validate the ## Quality Commands section in tasks.md.
+
+    Returns:
+        (parsed_commands, errors, warnings)
+        - parsed_commands: dict with Build/Typecheck/Lint/Test values (or empty)
+        - errors: list of error dicts
+        - warnings: list of warning dicts
+    """
+    errors = []
+    warnings = []
+    parsed_commands = {}
+
+    # Check if section exists
+    section_match = re.search(r'^## Quality Commands\b', content, re.MULTILINE)
+    if not section_match:
+        errors.append({
+            'line': 0,
+            'type': 'missing_quality_commands',
+            'message': 'Missing ## Quality Commands section in tasks.md',
+            'text': '',
+            'fix': 'Add a ## Quality Commands section with Build, Typecheck, Lint, Test fields',
+        })
+        return parsed_commands, errors, warnings
+
+    # Extract section text (from header to next ## or EOF)
+    section_start = section_match.start()
+    next_section = re.search(r'^## ', content[section_start + 1:], re.MULTILINE)
+    if next_section:
+        section_text = content[section_start:section_start + 1 + next_section.start()]
+    else:
+        section_text = content[section_start:]
+
+    # Parse the 4 fields
+    fields = ['Build', 'Typecheck', 'Lint', 'Test']
+    for field in fields:
+        field_match = re.search(
+            rf'\*\*{field}\*\*:\s*`([^`]+)`', section_text
+        )
+        if field_match:
+            parsed_commands[field.lower()] = field_match.group(1).strip()
+        else:
+            # Check for N/A value
+            na_match = re.search(
+                rf'\*\*{field}\*\*:\s*N/A', section_text
+            )
+            if na_match:
+                parsed_commands[field.lower()] = 'N/A'
+            else:
+                # Field missing entirely
+                if field == 'Test':
+                    warnings.append({
+                        'line': 0,
+                        'type': 'missing_test_command',
+                        'message': f'Quality Commands: **{field}** field missing or N/A',
+                    })
+                else:
+                    warnings.append({
+                        'line': 0,
+                        'type': f'missing_{field.lower()}_command',
+                        'message': f'Quality Commands: **{field}** field not found',
+                    })
+
+    # Warn if Test is N/A
+    if parsed_commands.get('test') == 'N/A':
+        warnings.append({
+            'line': 0,
+            'type': 'missing_test_command',
+            'message': 'Quality Commands: **Test** field is N/A',
+        })
+
+    return parsed_commands, errors, warnings
+
+
 def format_report(result: dict) -> str:
     """Format validation result as human-readable report."""
     lines = []
@@ -311,6 +385,8 @@ def main():
     parser.add_argument('--json', action='store_true', help='Output JSON instead of text')
     parser.add_argument('--check-verify-commands', action='store_true',
                         help='Flag compile-only verify commands (no real tests)')
+    parser.add_argument('--require-quality-commands', action='store_true',
+                        help='Require ## Quality Commands section with Build/Typecheck/Lint/Test')
     args = parser.parse_args()
 
     path = Path(args.tasks_md)
@@ -324,6 +400,15 @@ def main():
         sys.exit(1)
 
     result = validate(content)
+
+    # Optional: require Quality Commands section
+    if args.require_quality_commands:
+        qc_commands, qc_errors, qc_warnings = validate_quality_commands_section(content)
+        result['errors'].extend(qc_errors)
+        result['warnings'].extend(qc_warnings)
+        result['qualityCommands'] = qc_commands
+        if qc_errors:
+            result['valid'] = False
 
     # Optional: check verify commands for compile-only anti-patterns
     if args.check_verify_commands:
