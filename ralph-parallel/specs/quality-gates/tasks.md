@@ -97,7 +97,7 @@ Focus: Fix all CRITICAL and HIGH issues found by 5 parallel audit agents. No new
   **Files**: `scripts/validate-tasks-format.py`
   **Verify**: `python3 -c "import ast; ast.parse(open('/Users/patrickkavanagh/parallel_ralph/ralph-parallel/scripts/validate-tasks-format.py').read())"` exits 0
 
-- [ ] 4.2 Fix ANSI stripping and temp file safety in capture-baseline.sh
+- [x] 4.2 Fix ANSI stripping and temp file safety in capture-baseline.sh
   **Do**:
   1. Read `scripts/capture-baseline.sh`
   2. Add ANSI escape code stripping before parse_test_count: `TEST_OUTPUT=$(echo "$TEST_OUTPUT" | sed 's/\x1b\[[0-9;]*m//g')`
@@ -115,7 +115,7 @@ Focus: Fix all CRITICAL and HIGH issues found by 5 parallel audit agents. No new
   **Files**: `hooks/scripts/task-completed-gate.sh`
   **Verify**: `bash -n /Users/patrickkavanagh/parallel_ralph/ralph-parallel/hooks/scripts/task-completed-gate.sh` exits 0
 
-- [ ] 4.4 Fix dispatch.md error table and --check-verify-commands silent no-op
+- [x] 4.4 Fix dispatch.md error table and --check-verify-commands silent no-op
   **Do**:
   1. Read `commands/dispatch.md`
   2. Update Step 1.5 error handling: Add exit code 3 behavior (valid with warnings — display and continue). Currently only exit 0 and 2 are documented.
@@ -124,7 +124,7 @@ Focus: Fix all CRITICAL and HIGH issues found by 5 parallel audit agents. No new
   **Files**: `commands/dispatch.md`
   **Verify**: `grep -c 'exit.*3' /Users/patrickkavanagh/parallel_ralph/ralph-parallel/commands/dispatch.md` returns at least 1
 
-- [ ] 4.5 Sync to plugin cache and validate all scripts
+- [x] 4.5 Sync to plugin cache and validate all scripts
   **Do**:
   1. Run `rsync -av --delete ralph-parallel/ ~/.claude/plugins/cache/ralph-parallel-local/ralph-parallel/0.2.0/`
   2. Validate all Python scripts: `python3 -c "import ast; ast.parse(open('ralph-parallel/scripts/validate-tasks-format.py').read())"`
@@ -133,7 +133,7 @@ Focus: Fix all CRITICAL and HIGH issues found by 5 parallel audit agents. No new
   **Files**: N/A (validation only)
   **Verify**: All 3 validation commands exit 0
 
-- [ ] 4.6 [VERIFY] Audit fixes checkpoint
+- [x] 4.6 [VERIFY] Audit fixes checkpoint
   **Do**: Verify all audit fix tasks produced correct changes:
   1. Confirm _cmds_overlap uses token matching (not prefix)
   2. Confirm verify split handles `|`, `;`, `||`
