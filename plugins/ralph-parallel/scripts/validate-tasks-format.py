@@ -390,6 +390,12 @@ def main():
 
     result = validate(content)
 
+    # No parseable tasks found — treat as empty/unparseable
+    if result['taskCount'] == 0 and not result['errors']:
+        print(f"Error: No parseable tasks found in {path}", file=sys.stderr)
+        print("Expected format: - [ ] 1.1 Task description", file=sys.stderr)
+        sys.exit(1)
+
     # Parse quality commands (needed for verify check too)
     quality_commands = {}
     if args.require_quality_commands or args.check_verify_commands:

@@ -402,12 +402,16 @@ def build_dependency_graph(tasks: list[dict]) -> list[dict]:
 # ──────────────────────────────────────────────────────────────────
 
 def partition_tasks(tasks: list[dict], max_teammates: int, content: str = '',
-                    quality_commands: dict = None, verify_quality: dict = None) -> dict:
+                    quality_commands: dict = None, verify_quality: dict = None,
+                    strategy: str = 'file-ownership') -> dict:
     """Partition tasks into groups.
 
     If tasks.md contains pre-defined group annotations (### Group N: Name),
     those are used directly. Falls back to automatic file-ownership
     partitioning when no annotations exist.
+
+    strategy='worktree' skips file-ownership conflict detection since each
+    teammate gets an isolated worktree branch.
     """
     incomplete = [t for t in tasks if not t['completed']]
     if not incomplete:
@@ -422,6 +426,9 @@ def partition_tasks(tasks: list[dict], max_teammates: int, content: str = '',
     if predefined:
         groups, serial_tasks = _build_groups_from_predefined(
             predefined, tasks, parallel_tasks, max_teammates)
+    elif strategy == 'worktree':
+        groups, serial_tasks = _build_groups_worktree(
+            parallel_tasks, max_teammates)
     else:
         groups, serial_tasks = _build_groups_automatic(
             parallel_tasks, max_teammates)
@@ -469,6 +476,28 @@ def _build_groups_from_predefined(predefined, all_tasks, parallel_tasks, max_tea
     # Tasks not in any pre-defined group become serial
     serial = [t for t in parallel_tasks if t['id'] not in grouped_ids]
     return groups, serial
+
+
+def _build_groups_worktree(parallel_tasks, max_teammates):
+    """Build groups via load-balanced partitioning for worktree strategy.
+
+    Each teammate gets an isolated worktree, so file ownership conflicts
+    don't apply. Tasks are distributed round-robin by phase to balance load.
+    No tasks are serialized due to file conflicts.
+    """
+    parallel_tasks.sort(key=lambda t: (t['phase'], t['id']))
+
+    groups = [{'tasks': [], 'ownedFiles': set(), 'dependencies': set()}
+              for _ in range(min(max_teammates, len(parallel_tasks)))]
+
+    for i, task in enumerate(parallel_tasks):
+        target = i % len(groups)
+        groups[target]['tasks'].append(task)
+        groups[target]['ownedFiles'].update(task['files'])
+
+    # Remove empty groups
+    groups = [g for g in groups if g['tasks']]
+    return groups, []  # No serial tasks — worktree eliminates file conflicts
 
 
 def _build_groups_automatic(parallel_tasks, max_teammates):
@@ -653,10 +682,10 @@ def name_group(owned_files: list[str], group_index: int) -> str:
 # Output
 # ──────────────────────────────────────────────────────────────────
 
-def format_plan(result: dict) -> str:
+def format_plan(result: dict, strategy: str = 'file-ownership') -> str:
     """Format partition result as a human-readable plan."""
     lines = [
-        f"Strategy: file-ownership",
+        f"Strategy: {strategy}",
         f"Teams: {len(result['groups'])} teammates + 1 lead",
         f"Tasks: {result['incompleteTasks']} incomplete / {result['totalTasks']} total",
         '',
@@ -815,7 +844,8 @@ def main():
 
     # Pass content so partition_tasks can check for pre-defined groups
     result = partition_tasks(tasks, args.max_teammates, content,
-                             quality_commands=quality_commands, verify_quality=verify_quality)
+                             quality_commands=quality_commands, verify_quality=verify_quality,
+                             strategy=args.strategy)
 
     if result is None:
         print("All tasks complete. Nothing to dispatch.", file=sys.stderr)
@@ -830,7 +860,7 @@ def main():
         sys.exit(4)
 
     if args.format:
-        print(format_plan(result))
+        print(format_plan(result, strategy=args.strategy))
     else:
         for g in result['groups']:
             for t in g['taskDetails']:
