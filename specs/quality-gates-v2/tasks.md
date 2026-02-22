@@ -206,7 +206,7 @@ After POC validated, clean up code and add the verification script.
   - **Verify**: `head -1 /Users/patrickkavanagh/ralph-parallel-marketplace/LICENSE`
   - **Commit**: `docs: add MIT LICENSE file`
 
-- [ ] 5.2 Add CHANGELOG.md to marketplace repo root
+- [x] 5.2 Add CHANGELOG.md to marketplace repo root
   - **Do**:
     1. Create `CHANGELOG.md` at `/Users/patrickkavanagh/ralph-parallel-marketplace/CHANGELOG.md`
     2. Start with `# Changelog` header
