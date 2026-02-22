@@ -50,6 +50,13 @@ fi
 SPEC_DIR=$(cd "$(dirname "$DISPATCH_STATE")" && pwd)
 PROJECT_ROOT=$(cd "$SPEC_DIR/../.." && pwd)
 
+if [ ! -d "$PROJECT_ROOT" ]; then
+  echo "ralph-parallel: Project root not found: $PROJECT_ROOT — skipping baseline" >&2
+  RESULT='{"testCount": -1, "reason": "project_root_not_found"}'
+  echo "$RESULT"
+  exit 0
+fi
+
 echo "ralph-parallel: Capturing baseline test snapshot" >&2
 echo "ralph-parallel: Dispatch state: $DISPATCH_STATE" >&2
 echo "ralph-parallel: Project root: $PROJECT_ROOT" >&2
@@ -63,8 +70,9 @@ if [ -z "$TEST_CMD" ]; then
   RESULT='{"testCount": -1, "reason": "no_test_command"}'
   echo "$RESULT"
   # Update dispatch-state.json with baseline snapshot
-  jq --argjson snap "$RESULT" '.baselineSnapshot = $snap' "$DISPATCH_STATE" > "${DISPATCH_STATE}.tmp" \
-    && mv "${DISPATCH_STATE}.tmp" "$DISPATCH_STATE"
+  TMPFILE=$(mktemp "${DISPATCH_STATE}.XXXXXX")
+  jq --argjson snap "$RESULT" '.baselineSnapshot = $snap' "$DISPATCH_STATE" > "$TMPFILE" \
+    && mv "$TMPFILE" "$DISPATCH_STATE" || rm -f "$TMPFILE"
   exit 0
 fi
 
@@ -74,6 +82,7 @@ echo "ralph-parallel: Running test command: $TEST_CMD" >&2
 
 cd "$PROJECT_ROOT"
 TEST_OUTPUT=$(eval "$TEST_CMD" 2>&1) && TEST_EXIT=0 || TEST_EXIT=$?
+TEST_OUTPUT=$(printf '%s' "$TEST_OUTPUT" | sed $'s/\x1b\\[[0-9;]*m//g')
 
 if [ "$TEST_EXIT" -ne 0 ]; then
   echo "ralph-parallel: Test command failed (exit $TEST_EXIT) — baseline will be -1" >&2
@@ -82,8 +91,9 @@ if [ "$TEST_EXIT" -ne 0 ]; then
   RESULT=$(jq -n --argjson exit_code "$TEST_EXIT" '{testCount: -1, exitCode: $exit_code, reason: "tests_failing"}')
   echo "$RESULT"
   # Update dispatch-state.json
-  jq --argjson snap "$RESULT" '.baselineSnapshot = $snap' "$DISPATCH_STATE" > "${DISPATCH_STATE}.tmp" \
-    && mv "${DISPATCH_STATE}.tmp" "$DISPATCH_STATE"
+  TMPFILE=$(mktemp "${DISPATCH_STATE}.XXXXXX")
+  jq --argjson snap "$RESULT" '.baselineSnapshot = $snap' "$DISPATCH_STATE" > "$TMPFILE" \
+    && mv "$TMPFILE" "$DISPATCH_STATE" || rm -f "$TMPFILE"
   exit 0
 fi
 
@@ -125,8 +135,9 @@ if [ "$TEST_COUNT" -eq -1 ] 2>/dev/null; then
   RESULT=$(jq -n '{testCount: -1, reason: "unparseable"}')
   echo "$RESULT"
   # Update dispatch-state.json
-  jq --argjson snap "$RESULT" '.baselineSnapshot = $snap' "$DISPATCH_STATE" > "${DISPATCH_STATE}.tmp" \
-    && mv "${DISPATCH_STATE}.tmp" "$DISPATCH_STATE"
+  TMPFILE=$(mktemp "${DISPATCH_STATE}.XXXXXX")
+  jq --argjson snap "$RESULT" '.baselineSnapshot = $snap' "$DISPATCH_STATE" > "$TMPFILE" \
+    && mv "$TMPFILE" "$DISPATCH_STATE" || rm -f "$TMPFILE"
   exit 0
 fi
 
@@ -144,8 +155,9 @@ echo "$RESULT"
 
 # ── Update dispatch-state.json in-place ───────────────────────
 
-jq --argjson snap "$RESULT" '.baselineSnapshot = $snap' "$DISPATCH_STATE" > "${DISPATCH_STATE}.tmp" \
-  && mv "${DISPATCH_STATE}.tmp" "$DISPATCH_STATE"
+TMPFILE=$(mktemp "${DISPATCH_STATE}.XXXXXX")
+jq --argjson snap "$RESULT" '.baselineSnapshot = $snap' "$DISPATCH_STATE" > "$TMPFILE" \
+  && mv "$TMPFILE" "$DISPATCH_STATE" || rm -f "$TMPFILE"
 
 echo "ralph-parallel: Baseline written to dispatch-state.json" >&2
 exit 0
