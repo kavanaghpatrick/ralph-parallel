@@ -44,9 +44,13 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/validate-tasks-format.py \
 - 1: File not found or empty — "Run /ralph-specum:tasks to generate task list first."
 - 2: Format errors — display the diagnostic output to the user. The script reports exact line numbers and fix suggestions. Do NOT proceed to Step 2. Common causes:
   - `## Task N:` headers instead of `- [ ] X.Y` checkboxes
-  - Compile-only verify commands (`cargo check`, `tsc --noEmit`) — must use test runner
-  - Missing `## Quality Commands` section at top of tasks.md
-- 3: Valid with warnings — display warnings, then continue to Step 2
+  - Verify commands that match build/typecheck but not test (proves compilation, not correctness)
+- 3: Valid with warnings — display warnings, then continue to Step 2. Common warnings:
+  - Missing `## Quality Commands` section (older specs won't have it — not blocking)
+  - No test command declared (baseline snapshot will be skipped)
+  - Tasks missing **Files**/**Verify**/**Do** fields
+
+**Note on --check-verify-commands**: This flag compares each task's Verify command against the project's declared Quality Commands. When the Quality Commands section is missing, the verify check is safely skipped (cannot compare without declared commands). This is by design — `--require-quality-commands` handles the missing section as a warning.
 
 ## Step 2: Analyze and Partition (via script)
 
@@ -229,13 +233,27 @@ Do:
 
 ## Error Handling
 
-| Error | Action |
-|-------|--------|
-| Validate exit 2 | Format errors detected — show diagnostics, ask user to fix tasks.md |
-| Partition exit 1 | Format error — show stderr diagnostics (specific line numbers and fixes) |
-| Partition exit 2 | "All tasks already complete. Nothing to dispatch." |
-| Partition exit 3 | "Only 1 task remaining. Run /ralph-specum:implement instead." |
-| Partition exit 4 | "Circular file dependencies. Consider serializing or splitting files." |
+**validate-tasks-format.py** (Step 1.5):
+
+| Exit Code | Action |
+|-----------|--------|
+| 0 | Valid — continue to Step 2 |
+| 1 | File not found / empty — "Run /ralph-specum:tasks to generate task list first." |
+| 2 | Format errors — show diagnostics, do NOT proceed. Ask user to fix tasks.md |
+| 3 | Valid with warnings — show warnings, continue to Step 2 |
+
+**parse-and-partition.py** (Step 2):
+
+| Exit Code | Action |
+|-----------|--------|
+| 0 | Success — JSON partition on stdout |
+| 1 | Format error — show stderr diagnostics (line numbers and fixes) |
+| 2 | "All tasks already complete. Nothing to dispatch." |
+| 3 | "Only 1 task remaining. Run /ralph-specum:implement instead." |
+| 4 | "Circular file dependencies. Consider serializing or splitting files." |
+
+| General Error | Action |
+|---------------|--------|
 | Script not found | "Plugin scripts missing. Reinstall ralph-parallel." |
 
 ## Worktree Strategy (Phase 2)
