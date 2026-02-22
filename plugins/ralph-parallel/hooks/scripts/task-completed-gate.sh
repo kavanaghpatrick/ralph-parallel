@@ -198,5 +198,29 @@ if [ -n "$BUILD_CMD" ]; then
   fi
 fi
 
+# --- Stage 5: Test suite regression check ---
+TEST_CMD=$(jq -r '.qualityCommands.test // empty' "$DISPATCH_STATE" 2>/dev/null || true)
+TEST_INTERVAL=${TEST_INTERVAL:-2}
+
+if [ -n "$TEST_CMD" ]; then
+  # Reuse completed count from Stage 4 if available, otherwise recount
+  if [ -z "${COMPLETED_COUNT:-}" ]; then
+    COMPLETED_COUNT=$(grep -cE '^\s*- \[x\]' "$SPEC_DIR/tasks.md" 2>/dev/null || echo 0)
+  fi
+
+  if [ $((COMPLETED_COUNT % TEST_INTERVAL)) -eq 0 ] || [ "$COMPLETED_COUNT" -le 1 ]; then
+    echo "ralph-parallel: Running test suite regression check ($COMPLETED_COUNT tasks done): $TEST_CMD" >&2
+    TEST_OUTPUT=$(eval "$TEST_CMD" 2>&1) && TEST_EXIT=0 || TEST_EXIT=$?
+    if [ $TEST_EXIT -ne 0 ]; then
+      echo "REGRESSION CHECK FAILED: test suite" >&2
+      echo "Command: $TEST_CMD (exit $TEST_EXIT)" >&2
+      echo "--- Output (last 50 lines) ---" >&2
+      echo "$TEST_OUTPUT" | tail -50 >&2
+      echo "Your changes broke existing tests. Fix ALL test failures before marking task complete." >&2
+      exit 2
+    fi
+  fi
+fi
+
 # All stages passed
 exit 0
