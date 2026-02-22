@@ -20,40 +20,6 @@ import re
 import sys
 from pathlib import Path
 
-# Regexes matching compile-only commands (no actual test execution)
-COMPILE_ONLY_PATTERNS = [
-    re.compile(r'^cargo check'),
-    re.compile(r'^tsc\b.*--noEmit'),
-    re.compile(r'^go build$'),
-    re.compile(r'^pnpm build$'),
-    re.compile(r'^npm run build$'),
-    re.compile(r'^gcc\b'),
-    re.compile(r'^g\+\+\b'),
-    re.compile(r'^make$'),
-]
-
-# Regexes indicating a real test command
-TEST_PATTERNS = [
-    re.compile(r'test'),
-    re.compile(r'pytest'),
-    re.compile(r'jest'),
-    re.compile(r'vitest'),
-    re.compile(r'spec'),
-    re.compile(r'\.test\.'),
-]
-
-# Suggested replacements for compile-only commands
-_VERIFY_FIX_MAP = {
-    'cargo check': 'cargo test',
-    'tsc': 'npx jest or pnpm test',
-    'go build': 'go test ./...',
-    'pnpm build': 'pnpm test',
-    'npm run build': 'npm test',
-    'gcc': 'make test or run compiled test binary',
-    'g++': 'make test or run compiled test binary',
-    'make': 'make test',
-}
-
 
 def validate(content: str) -> dict:
     """Validate tasks.md content. Returns structured diagnostics."""
@@ -72,17 +38,13 @@ def validate(content: str) -> dict:
                 task_id = m.group(2)
                 phase = int(task_id.split('.')[0])
                 phases_found.add(phase)
-                rest = m.group(3)
-
-                # Check for required fields in task body
-                # (will check body after collecting all lines)
 
         # Detect wrong formats
         if re.match(r'^#{2,3}\s+Task\s+\d+', line):
             errors.append({
                 'line': i,
                 'type': 'header_format',
-                'message': f'Task uses header format instead of checkbox',
+                'message': 'Task uses header format instead of checkbox',
                 'text': line.rstrip(),
                 'fix': f'- [ ] {_extract_id_from_header(line)} {_extract_desc_from_header(line)}',
             })
@@ -200,74 +162,90 @@ def _extract_task_blocks(lines: list[str]) -> list[dict]:
     return blocks
 
 
-def _suggest_fix(cmd: str) -> str:
-    """Suggest a test command replacement for a compile-only command."""
-    cmd_stripped = cmd.strip()
-    for prefix, replacement in _VERIFY_FIX_MAP.items():
-        if cmd_stripped.startswith(prefix):
-            return f"Replace `{cmd_stripped}` with `{replacement}`"
-    return f"Replace `{cmd_stripped}` with a command that runs tests"
+def _extract_verify_cmd(body: str) -> str | None:
+    """Extract the Verify field value from a task block body."""
+    m = re.search(r'\*\*Verify\*\*:\s*`([^`]+)`', body)
+    if not m:
+        m = re.search(r'\*\*Verify\*\*:\s*```[^\n]*\n(.*?)```', body, re.DOTALL)
+    return m.group(1).strip() if m else None
 
 
-def _is_compile_only(cmd: str) -> bool:
-    """Check if a command matches a compile-only pattern."""
-    cmd_stripped = cmd.strip()
-    return any(p.search(cmd_stripped) for p in COMPILE_ONLY_PATTERNS)
+def _normalize_cmd(cmd: str) -> str:
+    """Strip runner prefixes (npx, bunx, etc.) for comparison."""
+    return re.sub(r'^(?:npx|pnpx|bunx|yarn(?:\s+run)?)\s+', '', cmd.strip())
 
 
-def _has_test_pattern(cmd: str) -> bool:
-    """Check if a command matches a test pattern."""
-    cmd_stripped = cmd.strip()
-    return any(p.search(cmd_stripped) for p in TEST_PATTERNS)
+def _cmds_overlap(cmd_a: str, cmd_b: str) -> bool:
+    """Check if two commands are essentially the same (after normalization)."""
+    a = _normalize_cmd(cmd_a)
+    b = _normalize_cmd(cmd_b)
+    # Exact match or one is a prefix of the other
+    return a == b or a.startswith(b) or b.startswith(a)
 
 
-def validate_verify_commands(task_blocks: list[dict]) -> list[dict]:
-    """Validate that verify commands include real tests, not just compile checks.
+def validate_verify_commands(task_blocks: list[dict], quality_commands: dict) -> list[dict]:
+    """Validate verify commands against the project's declared quality commands.
 
-    Returns list of error dicts for tasks whose Verify field only contains
-    compile-only commands with no test commands.
+    Uses the project's own Quality Commands section as source of truth.
+    A verify command that matches the build/typecheck command but NOT the test
+    command is flagged — it proves compilation but not correctness.
+
+    This is ecosystem-agnostic: works for any language/toolchain because it
+    compares against the project's own declared commands, not hardcoded patterns.
     """
     errors = []
-    exempt_patterns = re.compile(r'\b(config|docs|documentation)\b', re.IGNORECASE)
+    exempt_re = re.compile(r'\b(config|docs|documentation|readme|changelog)\b', re.IGNORECASE)
+
+    build_cmd = quality_commands.get('build', '')
+    typecheck_cmd = quality_commands.get('typecheck', '')
+    test_cmd = quality_commands.get('test', '')
+
+    # Skip check entirely if no test command declared (nothing to compare against)
+    if not test_cmd or test_cmd == 'N/A':
+        return errors
+
+    # Also need at least one of build/typecheck to detect "compile-only"
+    compile_cmds = [c for c in [build_cmd, typecheck_cmd] if c and c != 'N/A']
+    if not compile_cmds:
+        return errors
 
     for block in task_blocks:
         desc = block.get('description', '')
 
-        # Exempt [VERIFY] checkpoint tasks
-        if '[VERIFY]' in desc:
+        # Exempt checkpoint tasks and config/docs tasks
+        if '[VERIFY]' in desc or exempt_re.search(desc):
             continue
 
-        # Exempt config/docs tasks
-        if exempt_patterns.search(desc):
+        verify_cmd = _extract_verify_cmd(block['body'])
+        if not verify_cmd:
             continue
-
-        body = block['body']
-        # Extract Verify field value — matches **Verify**: `cmd` or **Verify**: ```cmd```
-        verify_match = re.search(r'\*\*Verify\*\*:\s*`([^`]+)`', body)
-        if not verify_match:
-            # Try multiline code block
-            verify_match = re.search(r'\*\*Verify\*\*:\s*```[^\n]*\n(.*?)```', body, re.DOTALL)
-        if not verify_match:
-            continue
-
-        verify_cmd = verify_match.group(1).strip()
 
         # Split on && to get individual commands
-        commands = [c.strip() for c in verify_cmd.split('&&')]
+        parts = [p.strip() for p in verify_cmd.split('&&')]
 
-        # Check: if ALL commands are compile-only AND NONE match test patterns
-        all_compile_only = all(_is_compile_only(c) for c in commands)
-        any_test = any(_has_test_pattern(c) for c in commands)
+        # Check: does the verify overlap with a compile command?
+        matches_compile = any(
+            _cmds_overlap(part, cc) for part in parts for cc in compile_cmds
+        )
 
-        if all_compile_only and not any_test:
+        # Check: does the verify overlap with the test command?
+        matches_test = any(
+            _cmds_overlap(part, test_cmd) for part in parts
+        )
+
+        # Flag: looks like a compile command but not a test command
+        if matches_compile and not matches_test:
             errors.append({
                 'task_id': block['id'],
                 'line': block['start_line'],
                 'type': 'compile_only_verify',
                 'verify_cmd': verify_cmd,
-                'message': f"Task {block['id']} Verify uses compile-only command: `{verify_cmd}`",
+                'message': (
+                    f"Task {block['id']} Verify matches build/typecheck "
+                    f"but not test command"
+                ),
                 'text': f"Task {block['id']}: **Verify**: `{verify_cmd}`",
-                'fix': _suggest_fix(commands[0]),
+                'fix': f"Include test command: `{test_cmd}`",
             })
 
     return errors
@@ -278,7 +256,7 @@ def validate_quality_commands_section(content: str) -> tuple[dict, list, list]:
 
     Returns:
         (parsed_commands, errors, warnings)
-        - parsed_commands: dict with Build/Typecheck/Lint/Test values (or empty)
+        - parsed_commands: dict with build/typecheck/lint/test values (or empty)
         - errors: list of error dicts
         - warnings: list of warning dicts
     """
@@ -286,15 +264,13 @@ def validate_quality_commands_section(content: str) -> tuple[dict, list, list]:
     warnings = []
     parsed_commands = {}
 
-    # Check if section exists
     section_match = re.search(r'^## Quality Commands\b', content, re.MULTILINE)
     if not section_match:
-        errors.append({
+        # Missing section is a warning, not error — older specs won't have it
+        warnings.append({
             'line': 0,
             'type': 'missing_quality_commands',
-            'message': 'Missing ## Quality Commands section in tasks.md',
-            'text': '',
-            'fix': 'Add a ## Quality Commands section with Build, Typecheck, Lint, Test fields',
+            'message': 'Missing ## Quality Commands section (recommended for dispatch)',
         })
         return parsed_commands, errors, warnings
 
@@ -307,41 +283,22 @@ def validate_quality_commands_section(content: str) -> tuple[dict, list, list]:
         section_text = content[section_start:]
 
     # Parse the 4 fields
-    fields = ['Build', 'Typecheck', 'Lint', 'Test']
-    for field in fields:
-        field_match = re.search(
-            rf'\*\*{field}\*\*:\s*`([^`]+)`', section_text
-        )
+    for field in ['Build', 'Typecheck', 'Lint', 'Test']:
+        field_match = re.search(rf'\*\*{field}\*\*:\s*`([^`]+)`', section_text)
         if field_match:
             parsed_commands[field.lower()] = field_match.group(1).strip()
         else:
-            # Check for N/A value
-            na_match = re.search(
-                rf'\*\*{field}\*\*:\s*N/A', section_text
-            )
+            na_match = re.search(rf'\*\*{field}\*\*:\s*N/A', section_text)
             if na_match:
                 parsed_commands[field.lower()] = 'N/A'
-            else:
-                # Field missing entirely
-                if field == 'Test':
-                    warnings.append({
-                        'line': 0,
-                        'type': 'missing_test_command',
-                        'message': f'Quality Commands: **{field}** field missing or N/A',
-                    })
-                else:
-                    warnings.append({
-                        'line': 0,
-                        'type': f'missing_{field.lower()}_command',
-                        'message': f'Quality Commands: **{field}** field not found',
-                    })
 
-    # Warn if Test is N/A
-    if parsed_commands.get('test') == 'N/A':
+    # Warn if Test is missing or N/A
+    test_val = parsed_commands.get('test')
+    if not test_val or test_val == 'N/A':
         warnings.append({
             'line': 0,
-            'type': 'missing_test_command',
-            'message': 'Quality Commands: **Test** field is N/A',
+            'type': 'no_test_command',
+            'message': 'Quality Commands: no test command declared (baseline snapshot will be skipped)',
         })
 
     return parsed_commands, errors, warnings
@@ -365,7 +322,8 @@ def format_report(result: dict) -> str:
         lines.append('Errors:')
         for e in result['errors']:
             lines.append(f"  Line {e['line']}: {e['message']}")
-            lines.append(f"    > {e['text']}")
+            if e.get('text'):
+                lines.append(f"    > {e['text']}")
             if e.get('fix'):
                 lines.append(f"    FIX: {e['fix']}")
 
@@ -373,7 +331,7 @@ def format_report(result: dict) -> str:
         lines.append('')
         lines.append('Warnings:')
         for w in result['warnings']:
-            prefix = f"Line {w['line']}: " if w['line'] > 0 else ''
+            prefix = f"Line {w['line']}: " if w.get('line', 0) > 0 else ''
             lines.append(f"  {prefix}{w['message']}")
 
     return '\n'.join(lines)
@@ -384,9 +342,9 @@ def main():
     parser.add_argument('--tasks-md', required=True, help='Path to tasks.md')
     parser.add_argument('--json', action='store_true', help='Output JSON instead of text')
     parser.add_argument('--check-verify-commands', action='store_true',
-                        help='Flag compile-only verify commands (no real tests)')
+                        help='Flag verify commands that match build but not test')
     parser.add_argument('--require-quality-commands', action='store_true',
-                        help='Require ## Quality Commands section with Build/Typecheck/Lint/Test')
+                        help='Warn if ## Quality Commands section is missing')
     args = parser.parse_args()
 
     path = Path(args.tasks_md)
@@ -401,20 +359,23 @@ def main():
 
     result = validate(content)
 
-    # Optional: require Quality Commands section
-    if args.require_quality_commands:
+    # Parse quality commands (needed for verify check too)
+    quality_commands = {}
+    if args.require_quality_commands or args.check_verify_commands:
         qc_commands, qc_errors, qc_warnings = validate_quality_commands_section(content)
-        result['errors'].extend(qc_errors)
-        result['warnings'].extend(qc_warnings)
-        result['qualityCommands'] = qc_commands
-        if qc_errors:
-            result['valid'] = False
+        quality_commands = qc_commands
+        if args.require_quality_commands:
+            result['errors'].extend(qc_errors)
+            result['warnings'].extend(qc_warnings)
+            result['qualityCommands'] = qc_commands
+            if qc_errors:
+                result['valid'] = False
 
-    # Optional: check verify commands for compile-only anti-patterns
+    # Check verify commands against declared quality commands
     if args.check_verify_commands:
-        lines = content.split('\n')
-        task_blocks = _extract_task_blocks(lines)
-        verify_errors = validate_verify_commands(task_blocks)
+        lines_list = content.split('\n')
+        task_blocks = _extract_task_blocks(lines_list)
+        verify_errors = validate_verify_commands(task_blocks, quality_commands)
         result['errors'].extend(verify_errors)
         if verify_errors:
             result['valid'] = False
