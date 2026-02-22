@@ -28,16 +28,25 @@ def build_quality_section(quality_commands: dict) -> list[str]:
     test = quality_commands.get('test')
     build = quality_commands.get('build')
 
+    lines.append('Before marking ANY task complete, run these checks in order:')
+    lines.append('')
+    step = 1
+    if build:
+        lines.append(f'{step}. Build: `{build}`')
+        step += 1
     if tc:
-        lines.append(f'- After EACH task, run typecheck: `{tc}`')
-        lines.append('  If it fails, fix errors BEFORE marking the task complete.')
+        lines.append(f'{step}. Typecheck: `{tc}`')
+        step += 1
     if test:
-        lines.append(f'- Write at least one test per implementation task. Run tests: `{test}`')
-    elif build:
-        lines.append(f'- Verify your code builds: `{build}`')
-    lines.append('- If typecheck/build fails after your changes, fix BEFORE marking task complete')
+        lines.append(f'{step}. Full test suite: `{test}`')
+        lines.append(f'   If ANY test fails (including pre-existing tests), fix it BEFORE marking done.')
+        lines.append(f'   Zero regressions policy: your changes must not break existing tests.')
+        step += 1
     if not tc and not test and not build:
-        lines.append('- Run any available project checks (build, lint, typecheck) after each task.')
+        lines.append(f'{step}. Run any available project checks (build, lint, typecheck, test).')
+        step += 1
+    lines.append('')
+    lines.append('If any check fails, fix the issue and re-run ALL checks before marking task complete.')
     return lines
 
 
