@@ -6,5 +6,10 @@
     "name": "patrickkavanagh"
   },
   "license": "MIT",
+  "homepage": "https://github.com/kavanaghpatrick/ralph-parallel",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kavanaghpatrick/ralph-parallel.git"
+  },
   "keywords": ["ralph", "parallel", "agent-teams", "dispatch", "coordination", "worktree"]
 }
