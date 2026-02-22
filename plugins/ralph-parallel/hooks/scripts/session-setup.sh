@@ -59,8 +59,36 @@ if [ "$IS_WORKTREE" = true ]; then
 fi
 
 if [ "$DISPATCH_ACTIVE" = true ]; then
+  DISPATCH_FILE="$GIT_ROOT/specs/$ACTIVE_SPEC/.dispatch-state.json"
+  TOTAL_GROUPS=$(jq '.groups | length' "$DISPATCH_FILE" 2>/dev/null) || TOTAL_GROUPS=0
+  COMPLETED_GROUPS=$(jq '.completedGroups | length' "$DISPATCH_FILE" 2>/dev/null) || COMPLETED_GROUPS=0
+  GROUP_NAMES=$(jq -r '[.groups[].name] | join(", ")' "$DISPATCH_FILE" 2>/dev/null) || GROUP_NAMES="unknown"
+  COMPLETED_LIST=$(jq -r '(.completedGroups // []) | join(", ")' "$DISPATCH_FILE" 2>/dev/null) || COMPLETED_LIST="none"
+  STRATEGY=$(jq -r '.strategy // "file-ownership"' "$DISPATCH_FILE" 2>/dev/null) || STRATEGY="file-ownership"
+
+  # Check if a team still exists
+  TEAM_CONFIG="$HOME/.claude/teams/${ACTIVE_SPEC}-parallel/config.json"
+  TEAM_EXISTS=false
+  if [ -f "$TEAM_CONFIG" ]; then
+    MEMBER_COUNT=$(jq '.members | length' "$TEAM_CONFIG" 2>/dev/null) || MEMBER_COUNT=0
+    if [ "$MEMBER_COUNT" -gt 0 ]; then
+      TEAM_EXISTS=true
+    fi
+  fi
+
   echo "ralph-parallel: Active parallel dispatch for spec '$ACTIVE_SPEC'"
-  echo "ralph-parallel: Run /ralph-parallel:status to see progress"
+  echo "ralph-parallel: Status: $COMPLETED_GROUPS/$TOTAL_GROUPS groups complete ($STRATEGY strategy)"
+  echo "ralph-parallel: Groups: $GROUP_NAMES"
+  echo "ralph-parallel: Completed: $COMPLETED_LIST"
+
+  if [ "$TEAM_EXISTS" = false ] && [ "$COMPLETED_GROUPS" -lt "$TOTAL_GROUPS" ]; then
+    echo ""
+    echo "ralph-parallel: WARNING — Dispatch is active but no team exists. Teammates were lost."
+    echo "ralph-parallel: You MUST re-run /ralph-parallel:dispatch to re-spawn teammates."
+    echo "ralph-parallel: Do NOT execute the remaining tasks yourself — re-dispatch for parallel execution."
+  else
+    echo "ralph-parallel: Run /ralph-parallel:status to see progress"
+  fi
 fi
 
 exit 0
