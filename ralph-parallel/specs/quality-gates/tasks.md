@@ -1,7 +1,7 @@
 ---
 spec: quality-gates
 phase: execution
-total_tasks: 11
+total_tasks: 18
 created: 2026-02-22
 generated: auto
 ---
@@ -43,7 +43,7 @@ Focus: Move anti-pattern enforcement from prose instructions to code that blocks
   - **Verify**: `python3 -c "import ast; ast.parse(open('/Users/patrickkavanagh/parallel_ralph/ralph-parallel/scripts/validate-tasks-format.py').read())"` exits 0, and `echo '- [ ] 1.1 Test\n  - **Verify**: \x60cargo check\x60' | python3 /Users/patrickkavanagh/parallel_ralph/ralph-parallel/scripts/validate-tasks-format.py --tasks-md /dev/stdin --check-verify-commands; test $? -eq 2`
   - **Commit**: `feat(quality): add verify command validation to reject compile-only checks`
 
-- [ ] 3.2 Add --require-quality-commands to validate-tasks-format.py
+- [x] 3.2 Add --require-quality-commands to validate-tasks-format.py
   - **Do**:
     1. Add `validate_quality_commands_section(content)` function:
        - Check for `## Quality Commands` section in content
@@ -76,9 +76,78 @@ Focus: Move anti-pattern enforcement from prose instructions to code that blocks
   - **Verify**: `bash -n /Users/patrickkavanagh/parallel_ralph/ralph-parallel/scripts/capture-baseline.sh` exits 0
   - **Commit**: `feat(quality): add deterministic baseline capture script`
 
+## Quality Commands
+
+**Build**: N/A
+**Typecheck**: N/A
+**Lint**: N/A
+**Test**: N/A
+
+## Phase 4: Audit Fixes (harden scripts from parallel audit)
+
+Focus: Fix all CRITICAL and HIGH issues found by 5 parallel audit agents. No new features — only correctness fixes.
+
+- [ ] 4.1 Fix _cmds_overlap prefix matching and command splitting in validate-tasks-format.py
+  **Do**:
+  1. Read `scripts/validate-tasks-format.py`
+  2. Fix `_cmds_overlap()`: Replace prefix matching (`a.startswith(b)`) with exact first-token matching — split both commands on whitespace, compare first tokens for equality. Only match if the base command is identical (e.g., `cargo build` should NOT match `cargo build --release` as "overlapping" in the wrong direction — but `cargo build --release` SHOULD match against declared `cargo build`)
+  3. Fix `validate_verify_commands()`: Split verify commands on `&&`, `||`, `;`, and `|` (not just `&&`). For piped commands, only check the first command in the pipe (the one that actually runs the tool)
+  4. Add case-insensitive matching for `N/A` in `validate_quality_commands_section()` (match `n/a`, `N/a`, `N/A`)
+  5. Handle empty/whitespace-only verify commands: if extracted verify is blank, add a warning (not error)
+  **Files**: `scripts/validate-tasks-format.py`
+  **Verify**: `python3 -c "import ast; ast.parse(open('/Users/patrickkavanagh/parallel_ralph/ralph-parallel/scripts/validate-tasks-format.py').read())"` exits 0
+
+- [ ] 4.2 Fix ANSI stripping and temp file safety in capture-baseline.sh
+  **Do**:
+  1. Read `scripts/capture-baseline.sh`
+  2. Add ANSI escape code stripping before parse_test_count: `TEST_OUTPUT=$(echo "$TEST_OUTPUT" | sed 's/\x1b\[[0-9;]*m//g')`
+  3. Fix temp file safety: use `mktemp` instead of predictable `.tmp` suffix: `TMPFILE=$(mktemp "${DISPATCH_STATE}.XXXXXX")` then `mv "$TMPFILE" "$DISPATCH_STATE"`. Apply to all 4 jq update sites.
+  4. Add `cd "$PROJECT_ROOT"` validation: check directory exists before cd
+  **Files**: `scripts/capture-baseline.sh`
+  **Verify**: `bash -n /Users/patrickkavanagh/parallel_ralph/ralph-parallel/scripts/capture-baseline.sh` exits 0
+
+- [x] 4.3 Fix jq null handling, baseline threshold, and ANSI stripping in task-completed-gate.sh
+  **Do**:
+  1. Read `hooks/scripts/task-completed-gate.sh`
+  2. Fix jq null handling: change `jq -r '.baselineSnapshot.testCount // empty'` — add explicit null/string check: `BASELINE_COUNT=$(jq -r '.baselineSnapshot.testCount // empty' ... || true)` then validate with `[ "$BASELINE_COUNT" != "null" ]`
+  3. Fix baseline threshold for small counts: when baseline <= 10, use `THRESHOLD=$((BASELINE_COUNT - 1))` instead of percentage (prevents integer truncation making threshold 0)
+  4. Add ANSI stripping before parse_test_count: `TEST_OUTPUT=$(echo "$TEST_OUTPUT" | sed 's/\x1b\[[0-9;]*m//g')`
+  **Files**: `hooks/scripts/task-completed-gate.sh`
+  **Verify**: `bash -n /Users/patrickkavanagh/parallel_ralph/ralph-parallel/hooks/scripts/task-completed-gate.sh` exits 0
+
+- [ ] 4.4 Fix dispatch.md error table and --check-verify-commands silent no-op
+  **Do**:
+  1. Read `commands/dispatch.md`
+  2. Update Step 1.5 error handling: Add exit code 3 behavior (valid with warnings — display and continue). Currently only exit 0 and 2 are documented.
+  3. Update error table to include validate-tasks-format.py exit codes (0, 1, 2, 3) separately from parse-and-partition.py exit codes (0, 1, 2, 3, 4)
+  4. Add note to Step 1.5: when --check-verify-commands runs but Quality Commands section is missing, the verify check is safely skipped (by design — cannot compare without declared commands). This is NOT a silent failure; --require-quality-commands handles the missing section warning.
+  **Files**: `commands/dispatch.md`
+  **Verify**: `grep -c 'exit.*3' /Users/patrickkavanagh/parallel_ralph/ralph-parallel/commands/dispatch.md` returns at least 1
+
+- [ ] 4.5 Sync to plugin cache and validate all scripts
+  **Do**:
+  1. Run `rsync -av --delete ralph-parallel/ ~/.claude/plugins/cache/ralph-parallel-local/ralph-parallel/0.2.0/`
+  2. Validate all Python scripts: `python3 -c "import ast; ast.parse(open('ralph-parallel/scripts/validate-tasks-format.py').read())"`
+  3. Validate all bash scripts: `bash -n ralph-parallel/scripts/capture-baseline.sh && bash -n ralph-parallel/hooks/scripts/task-completed-gate.sh`
+  4. Run validate-tasks-format.py against all existing specs to confirm no regressions
+  **Files**: N/A (validation only)
+  **Verify**: All 3 validation commands exit 0
+
+- [ ] 4.6 [VERIFY] Audit fixes checkpoint
+  **Do**: Verify all audit fix tasks produced correct changes:
+  1. Confirm _cmds_overlap uses token matching (not prefix)
+  2. Confirm verify split handles `|`, `;`, `||`
+  3. Confirm ANSI stripping present in both bash scripts
+  4. Confirm jq null handling fixed in task-completed-gate.sh
+  5. Confirm baseline threshold handles small counts
+  6. Confirm dispatch.md error table is complete
+  **Files**: All modified files
+  **Verify**: `python3 -c "import ast; ast.parse(open('/Users/patrickkavanagh/parallel_ralph/ralph-parallel/scripts/validate-tasks-format.py').read())"` && `bash -n /Users/patrickkavanagh/parallel_ralph/ralph-parallel/scripts/capture-baseline.sh` && `bash -n /Users/patrickkavanagh/parallel_ralph/ralph-parallel/hooks/scripts/task-completed-gate.sh`
+
 ## Notes
 
 - **No test suite**: This plugin has no automated tests. Verification relies on `bash -n` syntax checks, `python3 ast.parse` syntax checks, and grep-based content verification.
 - **External file**: task-planner.md is in the ralph-specum plugin cache, not this repo.
 - **Backward compatible**: All changes are additive.
 - **Code enforcement**: Tasks 3.1-3.3 replace prose instructions with scripts that block dispatch on violations.
+- **Audit fixes**: Tasks 4.1-4.6 fix issues found by parallel audit agents (no new features).
