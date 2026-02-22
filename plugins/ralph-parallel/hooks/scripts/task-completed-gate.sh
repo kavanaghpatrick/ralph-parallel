@@ -199,6 +199,36 @@ if [ -n "$BUILD_CMD" ]; then
 fi
 
 # --- Stage 5: Test suite regression check ---
+
+# parse_test_count: Extract passing test count from test runner output.
+# Returns count via echo. Returns -1 if unparseable.
+parse_test_count() {
+  local output="$1"
+  local count=""
+
+  # Jest/Vitest: "Tests:  5 passed" or "5 passed"
+  count=$(echo "$output" | grep -oE 'Tests:\s+[0-9]+ passed' | grep -oE '[0-9]+' | head -1)
+  if [ -n "$count" ]; then echo "$count"; return; fi
+
+  # Pytest: "5 passed"
+  count=$(echo "$output" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' | head -1)
+  if [ -n "$count" ]; then echo "$count"; return; fi
+
+  # Cargo test: "test result: ok. 5 passed"
+  count=$(echo "$output" | grep -oE 'test result:.*[0-9]+ passed' | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' | head -1)
+  if [ -n "$count" ]; then echo "$count"; return; fi
+
+  # Go test: count "ok" lines
+  count=$(echo "$output" | grep -cE '^ok\s+' 2>/dev/null || echo 0)
+  if [ "$count" -gt 0 ] 2>/dev/null; then echo "$count"; return; fi
+
+  # Generic fallback: count lines containing pass/ok/✓
+  count=$(echo "$output" | grep -ciE '(pass|✓|✔)' 2>/dev/null || echo 0)
+  if [ "$count" -gt 0 ] 2>/dev/null; then echo "$count"; return; fi
+
+  echo "-1"
+}
+
 TEST_CMD=$(jq -r '.qualityCommands.test // empty' "$DISPATCH_STATE" 2>/dev/null || true)
 TEST_INTERVAL=${TEST_INTERVAL:-2}
 
@@ -218,6 +248,26 @@ if [ -n "$TEST_CMD" ]; then
       echo "$TEST_OUTPUT" | tail -50 >&2
       echo "Your changes broke existing tests. Fix ALL test failures before marking task complete." >&2
       exit 2
+    fi
+
+    # --- Baseline comparison: detect test count regression ---
+    BASELINE_COUNT=$(jq -r '.baselineSnapshot.testCount // empty' "$DISPATCH_STATE" 2>/dev/null || true)
+    if [ -n "$BASELINE_COUNT" ] && [ "$BASELINE_COUNT" -gt 0 ] 2>/dev/null; then
+      CURRENT_COUNT=$(parse_test_count "$TEST_OUTPUT")
+      if [ "$CURRENT_COUNT" -gt 0 ] 2>/dev/null; then
+        # Allow up to 10% drop (threshold = baseline * 90 / 100)
+        THRESHOLD=$(( BASELINE_COUNT * 90 / 100 ))
+        if [ "$CURRENT_COUNT" -lt "$THRESHOLD" ]; then
+          echo "TEST COUNT REGRESSION DETECTED" >&2
+          echo "Baseline: $BASELINE_COUNT tests passing at dispatch" >&2
+          echo "Current:  $CURRENT_COUNT tests passing now" >&2
+          echo "Threshold: $THRESHOLD (90% of baseline)" >&2
+          echo "Your changes may have deleted or broken existing tests." >&2
+          echo "Restore missing tests before marking task complete." >&2
+          exit 2
+        fi
+        echo "ralph-parallel: Test count OK ($CURRENT_COUNT current vs $BASELINE_COUNT baseline)" >&2
+      fi
     fi
   fi
 fi

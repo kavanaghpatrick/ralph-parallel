@@ -93,9 +93,42 @@ Display the output to the user. If `--dry-run`: STOP here.
      "serialTasks": <from partition JSON>,
      "verifyTasks": <from partition JSON>,
      "qualityCommands": <from partition JSON>,
+     "baselineSnapshot": null,
      "status": "dispatched",
      "completedGroups": []
    }
+```
+
+## Step 4.5: Capture Baseline Test Snapshot
+
+Before spawning teammates, capture the current test state for regression detection:
+
+```text
+1. Read qualityCommands.test from the dispatch-state.json just written
+2. If no test command (empty/null): skip — leave baselineSnapshot as null
+3. If test command exists:
+   a. Run the test command from project root, capture stdout+stderr
+   b. Record the exit code
+   c. Parse test count from output using this regex cascade:
+      - Jest/Vitest: /Tests:\s+(\d+) passed/ or /(\d+) passed/
+      - Pytest: /(\d+) passed/
+      - Cargo test: /test result:.*(\d+) passed/
+      - Go test: count lines matching /^ok\s+/
+      - Generic fallback: count lines containing "pass", "ok", or "✓"
+   d. If test command FAILS (exit != 0):
+      - WARN user: "⚠ Baseline tests failing — teammates will inherit broken tests"
+      - Set testCount to -1 (signals pre-existing failure)
+      - Continue dispatch (do NOT block)
+   e. If output is unparseable (no count extracted):
+      - Set testCount to -1
+      - Log: "Could not parse test count from output"
+   f. Update dispatch-state.json:
+      "baselineSnapshot": {
+        "testCount": N,
+        "capturedAt": "<ISO timestamp>",
+        "command": "<test command>",
+        "exitCode": N
+      }
 ```
 
 ## Step 5: Create Team and TaskList
@@ -116,6 +149,12 @@ For each group in the partition, generate a prompt and spawn:
 
 Extract `QUALITY_COMMANDS_JSON` from the partition JSON's `qualityCommands` field (as a JSON string).
 
+Extract `BASELINE_TEST_COUNT` from dispatch-state.json's `baselineSnapshot.testCount` field (default 0 if missing or null):
+
+```bash
+BASELINE_TEST_COUNT=$(jq -r '.baselineSnapshot.testCount // 0' specs/$specName/.dispatch-state.json 2>/dev/null || echo 0)
+```
+
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/build-teammate-prompt.py \
   --partition-file /tmp/$specName-partition.json \
@@ -123,7 +162,8 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/build-teammate-prompt.py \
   --spec-name $specName \
   --project-root $projectRoot \
   --task-ids "#$id1,#$id2,..." \
-  --quality-commands "$QUALITY_COMMANDS_JSON"
+  --quality-commands "$QUALITY_COMMANDS_JSON" \
+  --baseline-test-count $BASELINE_TEST_COUNT
 ```
 
 Spawn via Task tool with the script's stdout as the prompt:

@@ -21,7 +21,7 @@ import json
 import sys
 
 
-def build_quality_section(quality_commands: dict) -> list[str]:
+def build_quality_section(quality_commands: dict, baseline_test_count: int = 0) -> list[str]:
     """Build the Quality Checks section lines from discovered quality commands."""
     lines = []
     tc = quality_commands.get('typecheck')
@@ -47,11 +47,17 @@ def build_quality_section(quality_commands: dict) -> list[str]:
         step += 1
     lines.append('')
     lines.append('If any check fails, fix the issue and re-run ALL checks before marking task complete.')
+
+    if baseline_test_count > 0:
+        lines.append('')
+        lines.append(f'Baseline: {baseline_test_count} tests passing at dispatch time.')
+        lines.append('Do NOT delete or skip existing tests — the quality gate detects test count regression.')
+
     return lines
 
 
 def build_prompt(group: dict, spec_name: str, project_root: str, task_ids: list[str],
-                 quality_commands: dict = None) -> str:
+                 quality_commands: dict = None, baseline_test_count: int = 0) -> str:
     """Build the complete teammate prompt for a group."""
     lines = []
 
@@ -124,7 +130,7 @@ def build_prompt(group: dict, spec_name: str, project_root: str, task_ids: list[
     if quality_commands is None:
         quality_commands = {}
     lines.append('## Quality Checks')
-    lines.extend(build_quality_section(quality_commands))
+    lines.extend(build_quality_section(quality_commands, baseline_test_count=baseline_test_count))
     lines.append('')
 
     # Rules
@@ -146,6 +152,7 @@ def main():
     parser.add_argument('--project-root', required=True, help='Project root directory')
     parser.add_argument('--task-ids', required=True, help='Comma-separated TaskList IDs (e.g., "#1,#2,#3")')
     parser.add_argument('--quality-commands', default='{}', help='JSON of quality commands')
+    parser.add_argument('--baseline-test-count', type=int, default=0, help='Baseline test count from dispatch snapshot')
     args = parser.parse_args()
 
     # Read partition JSON
@@ -170,7 +177,8 @@ def main():
     quality_commands = json.loads(args.quality_commands)
 
     prompt = build_prompt(group, args.spec_name, args.project_root, task_ids,
-                          quality_commands=quality_commands)
+                          quality_commands=quality_commands,
+                          baseline_test_count=args.baseline_test_count)
     print(prompt)
 
 
