@@ -3,7 +3,9 @@
 Validate tasks.md format for ralph-parallel compatibility.
 
 Usage:
-    python3 validate-tasks-format.py --tasks-md <path> [--json] [--fix-hints]
+    python3 validate-tasks-format.py --tasks-md <path> [--json]
+    python3 validate-tasks-format.py --tasks-md <path> --check-verify-commands
+    python3 validate-tasks-format.py --tasks-md <path> --require-quality-commands
 
 Exit codes:
     0 = valid (all tasks parseable)
@@ -17,6 +19,40 @@ import json
 import re
 import sys
 from pathlib import Path
+
+# Regexes matching compile-only commands (no actual test execution)
+COMPILE_ONLY_PATTERNS = [
+    re.compile(r'^cargo check'),
+    re.compile(r'^tsc\b.*--noEmit'),
+    re.compile(r'^go build$'),
+    re.compile(r'^pnpm build$'),
+    re.compile(r'^npm run build$'),
+    re.compile(r'^gcc\b'),
+    re.compile(r'^g\+\+\b'),
+    re.compile(r'^make$'),
+]
+
+# Regexes indicating a real test command
+TEST_PATTERNS = [
+    re.compile(r'test'),
+    re.compile(r'pytest'),
+    re.compile(r'jest'),
+    re.compile(r'vitest'),
+    re.compile(r'spec'),
+    re.compile(r'\.test\.'),
+]
+
+# Suggested replacements for compile-only commands
+_VERIFY_FIX_MAP = {
+    'cargo check': 'cargo test',
+    'tsc': 'npx jest or pnpm test',
+    'go build': 'go test ./...',
+    'pnpm build': 'pnpm test',
+    'npm run build': 'npm test',
+    'gcc': 'make test or run compiled test binary',
+    'g++': 'make test or run compiled test binary',
+    'make': 'make test',
+}
 
 
 def validate(content: str) -> dict:
@@ -139,9 +175,10 @@ def _extract_task_blocks(lines: list[str]) -> list[dict]:
     blocks = []
     i = 0
     while i < len(lines):
-        m = re.match(r'^- \[.\]\s*(\d+\.\d+)', lines[i])
+        m = re.match(r'^- \[.\]\s*(\d+\.\d+)\s*(.*)', lines[i])
         if m:
             task_id = m.group(1)
+            description = m.group(2).strip()
             start = i + 1
             body_lines = []
             i += 1
@@ -154,12 +191,86 @@ def _extract_task_blocks(lines: list[str]) -> list[dict]:
                 i += 1
             blocks.append({
                 'id': task_id,
+                'description': description,
                 'start_line': start,
                 'body': '\n'.join(body_lines),
             })
         else:
             i += 1
     return blocks
+
+
+def _suggest_fix(cmd: str) -> str:
+    """Suggest a test command replacement for a compile-only command."""
+    cmd_stripped = cmd.strip()
+    for prefix, replacement in _VERIFY_FIX_MAP.items():
+        if cmd_stripped.startswith(prefix):
+            return f"Replace `{cmd_stripped}` with `{replacement}`"
+    return f"Replace `{cmd_stripped}` with a command that runs tests"
+
+
+def _is_compile_only(cmd: str) -> bool:
+    """Check if a command matches a compile-only pattern."""
+    cmd_stripped = cmd.strip()
+    return any(p.search(cmd_stripped) for p in COMPILE_ONLY_PATTERNS)
+
+
+def _has_test_pattern(cmd: str) -> bool:
+    """Check if a command matches a test pattern."""
+    cmd_stripped = cmd.strip()
+    return any(p.search(cmd_stripped) for p in TEST_PATTERNS)
+
+
+def validate_verify_commands(task_blocks: list[dict]) -> list[dict]:
+    """Validate that verify commands include real tests, not just compile checks.
+
+    Returns list of error dicts for tasks whose Verify field only contains
+    compile-only commands with no test commands.
+    """
+    errors = []
+    exempt_patterns = re.compile(r'\b(config|docs|documentation)\b', re.IGNORECASE)
+
+    for block in task_blocks:
+        desc = block.get('description', '')
+
+        # Exempt [VERIFY] checkpoint tasks
+        if '[VERIFY]' in desc:
+            continue
+
+        # Exempt config/docs tasks
+        if exempt_patterns.search(desc):
+            continue
+
+        body = block['body']
+        # Extract Verify field value — matches **Verify**: `cmd` or **Verify**: ```cmd```
+        verify_match = re.search(r'\*\*Verify\*\*:\s*`([^`]+)`', body)
+        if not verify_match:
+            # Try multiline code block
+            verify_match = re.search(r'\*\*Verify\*\*:\s*```[^\n]*\n(.*?)```', body, re.DOTALL)
+        if not verify_match:
+            continue
+
+        verify_cmd = verify_match.group(1).strip()
+
+        # Split on && to get individual commands
+        commands = [c.strip() for c in verify_cmd.split('&&')]
+
+        # Check: if ALL commands are compile-only AND NONE match test patterns
+        all_compile_only = all(_is_compile_only(c) for c in commands)
+        any_test = any(_has_test_pattern(c) for c in commands)
+
+        if all_compile_only and not any_test:
+            errors.append({
+                'task_id': block['id'],
+                'line': block['start_line'],
+                'type': 'compile_only_verify',
+                'verify_cmd': verify_cmd,
+                'message': f"Task {block['id']} Verify uses compile-only command: `{verify_cmd}`",
+                'text': f"Task {block['id']}: **Verify**: `{verify_cmd}`",
+                'fix': _suggest_fix(commands[0]),
+            })
+
+    return errors
 
 
 def format_report(result: dict) -> str:
@@ -198,6 +309,8 @@ def main():
     parser = argparse.ArgumentParser(description='Validate tasks.md format')
     parser.add_argument('--tasks-md', required=True, help='Path to tasks.md')
     parser.add_argument('--json', action='store_true', help='Output JSON instead of text')
+    parser.add_argument('--check-verify-commands', action='store_true',
+                        help='Flag compile-only verify commands (no real tests)')
     args = parser.parse_args()
 
     path = Path(args.tasks_md)
@@ -211,6 +324,15 @@ def main():
         sys.exit(1)
 
     result = validate(content)
+
+    # Optional: check verify commands for compile-only anti-patterns
+    if args.check_verify_commands:
+        lines = content.split('\n')
+        task_blocks = _extract_task_blocks(lines)
+        verify_errors = validate_verify_commands(task_blocks)
+        result['errors'].extend(verify_errors)
+        if verify_errors:
+            result['valid'] = False
 
     if args.json:
         print(json.dumps(result, indent=2))
