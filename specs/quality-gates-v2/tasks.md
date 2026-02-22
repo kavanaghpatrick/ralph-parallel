@@ -90,7 +90,7 @@ Focus: Get all 3 fixes working end-to-end. Skip tests, accept rough edges.
 
 After POC validated, clean up code and add the verification script.
 
-- [ ] 2.1 Create verify-commit-provenance.py script
+- [x] 2.1 Create verify-commit-provenance.py script
   - **Do**:
     1. Create `ralph-parallel/scripts/verify-commit-provenance.py`
     2. Add argparse: `--dispatch-state <path>`, `--since <ISO-timestamp>` (optional, defaults to dispatchedAt from state)
@@ -104,7 +104,7 @@ After POC validated, clean up code and add the verification script.
   - **Verify**: `python3 -c "import ast; ast.parse(open('/Users/patrickkavanagh/parallel_ralph/ralph-parallel/scripts/verify-commit-provenance.py').read())"`
   - **Commit**: `feat(quality): add verify-commit-provenance.py audit script`
 
-- [ ] 2.2 Harden mark-tasks-complete.py edge cases
+- [x] 2.2 Harden mark-tasks-complete.py edge cases
   - **Do**:
     1. Read `ralph-parallel/scripts/mark-tasks-complete.py`
     2. Handle edge case: dispatch-state.json has no `completedGroups` key (default to empty list)
@@ -118,7 +118,7 @@ After POC validated, clean up code and add the verification script.
   - **Verify**: `python3 -c "import ast; ast.parse(open('/Users/patrickkavanagh/parallel_ralph/ralph-parallel/scripts/mark-tasks-complete.py').read())"`
   - **Commit**: `refactor(quality): harden mark-tasks-complete.py edge cases`
 
-- [ ] 2.3 Add error handling to lint stage in task-completed-gate.sh
+- [x] 2.3 Add error handling to lint stage in task-completed-gate.sh
   - **Do**:
     1. Read `ralph-parallel/hooks/scripts/task-completed-gate.sh`
     2. In Stage 6: add `2>/dev/null || true` to the jq read for lint command (match pattern from Stage 4/5)
