@@ -186,20 +186,23 @@ Spawn ALL non-blocked groups simultaneously (parallel Task calls).
    b. Read qualityCommands from .dispatch-state.json
    c. Run qualityCommands.build (if available)
    d. Run qualityCommands.test (if available)
-   e. If build/test FAIL: message affected teammates with error output.
+   e. Run qualityCommands.lint (if available)
+   f. If build/test/lint FAIL: message affected teammates with error output.
       Do NOT mark phase complete. Teammates must fix.
-   f. If all pass: mark verify task completed, message Phase N+1 teammates: "Proceed"
+   g. If all pass: mark verify task completed, message Phase N+1 teammates: "Proceed"
 
 5. SERIAL TASKS: After Phase 2, execute serial tasks yourself
 
 6. FINAL VERIFY: Run Phase 2 verify checkpoint
 
 7. CLEANUP:
-   a. Shut down teammates (SendMessage shutdown_request)
-   b. File-ownership: set status = "merged" (no /merge needed)
-   c. Worktree: leave as "dispatched" (needs /merge)
-   d. TeamDelete
-   e. "ALL_PARALLEL_COMPLETE — $totalTasks tasks done."
+   a. Mark completed tasks in tasks.md:
+      `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/mark-tasks-complete.py --dispatch-state specs/$specName/.dispatch-state.json --tasks-md specs/$specName/tasks.md`
+   b. Shut down teammates (SendMessage shutdown_request)
+   c. File-ownership: set status = "merged" (no /merge needed)
+   d. Worktree: leave as "dispatched" (needs /merge)
+   e. TeamDelete
+   f. "ALL_PARALLEL_COMPLETE — $totalTasks tasks done."
 ```
 
 The dispatch-coordinator.sh Stop hook will re-inject this context if compaction occurs.
