@@ -33,7 +33,7 @@ Focus: Get all 3 fixes working end-to-end. Skip tests, accept rough edges.
   - **Verify**: `bash -n /Users/patrickkavanagh/parallel_ralph/ralph-parallel/hooks/scripts/task-completed-gate.sh`
   - **Commit**: `feat(quality): add periodic lint enforcement to task-completed-gate`
 
-- [ ] 1.2 Create mark-tasks-complete.py script
+- [x] 1.2 Create mark-tasks-complete.py script
   - **Do**:
     1. Create `ralph-parallel/scripts/mark-tasks-complete.py`
     2. Add argparse: `--dispatch-state <path>` and `--tasks-md <path>`
@@ -49,7 +49,7 @@ Focus: Get all 3 fixes working end-to-end. Skip tests, accept rough edges.
   - **Verify**: `python3 -c "import ast; ast.parse(open('/Users/patrickkavanagh/parallel_ralph/ralph-parallel/scripts/mark-tasks-complete.py').read())"`
   - **Commit**: `feat(quality): add mark-tasks-complete.py for automatic checkbox writeback`
 
-- [ ] 1.3 Add commit provenance convention to build-teammate-prompt.py
+- [x] 1.3 Add commit provenance convention to build-teammate-prompt.py
   - **Do**:
     1. Read `ralph-parallel/scripts/build-teammate-prompt.py`
     2. In `build_prompt()`, after the "## Rules" section (around line 136), add a new "## Commit Convention" section

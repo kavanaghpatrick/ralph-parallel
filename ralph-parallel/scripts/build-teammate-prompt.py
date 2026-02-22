@@ -102,7 +102,7 @@ def build_prompt(group: dict, spec_name: str, project_root: str, task_ids: list[
             lines.append(f'- **Verify**: `{task["verify"]}`')
 
         if task.get('commit'):
-            lines.append(f'- **Commit**: `{task["commit"]}`')
+            lines.append(f'- **Commit**: `{task["commit"]}` (remember to include Signed-off-by trailer)')
 
         # Phase 2 note
         if has_multi_phases and task.get('phase', 1) > min(phases):
@@ -140,6 +140,25 @@ def build_prompt(group: dict, spec_name: str, project_root: str, task_ids: list[
     lines.append('- After ALL tasks done, message the lead:')
     lines.append(f'  "Group {name} complete. All {len(tasks)} tasks verified."')
     lines.append(f'- Working directory: {project_root}')
+    lines.append('')
+
+    # Commit Convention
+    lines.append('## Commit Convention')
+    lines.append('Every commit MUST include a git trailer for provenance tracking:')
+    lines.append('')
+    lines.append('```')
+    lines.append(f'Signed-off-by: {name}')
+    lines.append('```')
+    lines.append('')
+    lines.append('Example commit message:')
+    lines.append('')
+    lines.append('```')
+    lines.append('feat(auth): add login endpoint')
+    lines.append('')
+    lines.append(f'Signed-off-by: {name}')
+    lines.append('```')
+    lines.append('')
+    lines.append('Use `git commit -s` flag or manually append the trailer to every commit.')
 
     return '\n'.join(lines)
 
