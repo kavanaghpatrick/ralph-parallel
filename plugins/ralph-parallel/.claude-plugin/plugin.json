@@ -7,9 +7,6 @@
   },
   "license": "MIT",
   "homepage": "https://github.com/kavanaghpatrick/ralph-parallel",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/kavanaghpatrick/ralph-parallel.git"
-  },
+  "repository": "https://github.com/kavanaghpatrick/ralph-parallel",
   "keywords": ["ralph", "parallel", "agent-teams", "dispatch", "coordination", "worktree"]
 }
