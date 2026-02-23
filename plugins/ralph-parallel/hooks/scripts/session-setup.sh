@@ -9,6 +9,18 @@
 
 set -euo pipefail
 
+# Pre-flight: check Python 3.10+ and jq are available
+if ! command -v jq &>/dev/null; then
+  echo "ralph-parallel: WARNING — jq not found. Install via: brew install jq"
+fi
+PYTHON_OK=$(python3 -c "import sys; print('ok' if sys.version_info >= (3, 10) else 'old')" 2>/dev/null) || PYTHON_OK="missing"
+if [ "$PYTHON_OK" = "old" ]; then
+  PY_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+  echo "ralph-parallel: WARNING — Python 3.10+ required, found $PY_VER. Install via: brew install python"
+elif [ "$PYTHON_OK" = "missing" ]; then
+  echo "ralph-parallel: WARNING — python3 not found. Install via: brew install python"
+fi
+
 # Find project root (handles both main repo and worktrees)
 GIT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 
