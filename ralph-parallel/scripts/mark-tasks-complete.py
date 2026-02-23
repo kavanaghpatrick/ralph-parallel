@@ -53,16 +53,25 @@ def main():
         print(json.dumps({"marked": 0, "alreadyComplete": 0, "notFound": 0}))
         sys.exit(0)
 
-    # Build map: group name -> list of task IDs
+    # Build map: group name -> list of task IDs (accumulate, don't overwrite)
     group_tasks = {}
     for group in groups:
-        group_tasks[group['name']] = group.get('tasks', [])
+        name = group['name']
+        tasks = group.get('tasks', [])
+        if name in group_tasks:
+            group_tasks[name].extend(tasks)
+        else:
+            group_tasks[name] = list(tasks)
 
-    # Collect all task IDs from completed groups
+    # Collect all task IDs from completed groups (deduplicate)
     task_ids = []
+    seen_ids = set()
     for group_name in completed_groups:
         if group_name in group_tasks:
-            task_ids.extend(group_tasks[group_name])
+            for tid in group_tasks[group_name]:
+                if tid not in seen_ids:
+                    task_ids.append(tid)
+                    seen_ids.add(tid)
 
     if not task_ids:
         print(json.dumps({"marked": 0, "alreadyComplete": 0, "notFound": 0}))

@@ -68,7 +68,10 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/parse-and-partition.py \
 - 1: tasks.md format error → Display stderr diagnostics (parse-and-partition.py now reports specific format issues with line numbers and fix suggestions). Do NOT just say "Run /ralph-specum:tasks" — the diagnostics will indicate the actual problem.
 - 2: All complete → "All tasks complete. Nothing to dispatch."
 - 3: Single task → "Only 1 task remaining. Run /ralph-specum:implement instead."
-- 4: Circular deps → "Unresolvable circular file dependencies."
+- 4: Circular deps → Offer the user a choice:
+  - **Option A**: Re-run with `--strategy worktree` (each teammate gets isolated branch, requires /merge after)
+  - **Option B**: Serialize the overlapping tasks (run them sequentially, not in parallel)
+  - If the user chooses worktree: re-run parse-and-partition.py with `--strategy worktree`, then update $strategy to "worktree" and continue from Step 3. The dispatch-state.json MUST reflect the actual strategy used.
 
 ## Step 3: Display Partition Plan
 
@@ -119,15 +122,49 @@ If the script reports pre-existing test failures, warn the user but continue.
 
 ## Step 5: Create Team and TaskList
 
+<mandatory>
+You MUST create one TaskCreate call for EVERY individual spec task in the partition JSON.
+Do NOT summarize multiple tasks into a single TaskList item. The total number of TaskCreate
+calls must equal the total number of tasks across ALL groups plus verify tasks.
+</mandatory>
+
 ```text
 1. TeamCreate: name "$specName-parallel"
 
-2. Create one TaskList task per spec task (1:1 mapping):
-   - Subject: "X.Y: description" (spec task ID MUST start the subject)
-   - Description: full task block from partition JSON's taskDetails.rawBlock
-   - blockedBy: [VERIFY] tasks blocked by all preceding same-phase tasks,
-     Phase 2 tasks blocked by Phase 1 verify task
+2. For EVERY task in EVERY group in the partition JSON, call TaskCreate:
+
+   FOR each group in partition.groups:
+     FOR each task in group.taskDetails:
+       TaskCreate:
+         subject: "{task.id}: {task.description}"
+         description: task.rawBlock
+         activeForm: "Implementing {task.id}"
+
+   ALSO for each verify task in partition.verifyTasks:
+     TaskCreate:
+       subject: "{verifyTask.id}: {verifyTask.description}"
+       description: verifyTask.rawBlock
+       activeForm: "Running {verifyTask.id} verify"
+       blockedBy: [IDs of all same-phase tasks]
+
+   Phase 2+ tasks: set blockedBy to include the preceding phase's verify task ID.
+
+3. Record the TaskList ID → spec task ID mapping for use in Step 6.
 ```
+
+**Example**: If partition has 2 groups with 3 tasks each + 2 verify tasks = 8 TaskCreate calls:
+```
+TaskCreate: "1.1: Add types header"       → TaskList #1
+TaskCreate: "1.2: Implement allocator"     → TaskList #2
+TaskCreate: "1.3: Wire dispatch table"     → TaskList #3
+TaskCreate: "1.4: [VERIFY] Phase 1"        → TaskList #4 (blockedBy: #1, #2, #3)
+TaskCreate: "2.1: Add error handling"      → TaskList #5 (blockedBy: #4)
+TaskCreate: "2.2: Add fallback paths"      → TaskList #6 (blockedBy: #4)
+TaskCreate: "2.3: Integration tests"       → TaskList #7 (blockedBy: #4)
+TaskCreate: "2.4: [VERIFY] Phase 2"        → TaskList #8 (blockedBy: #5, #6, #7)
+```
+
+Do NOT create summary tasks like "Phase 2: all remaining work" — each spec task gets its own entry.
 
 ## Step 6: Spawn Teammates
 
@@ -149,7 +186,8 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/build-teammate-prompt.py \
   --project-root $projectRoot \
   --task-ids "#$id1,#$id2,..." \
   --quality-commands "$QUALITY_COMMANDS_JSON" \
-  --baseline-test-count $BASELINE_TEST_COUNT
+  --baseline-test-count $BASELINE_TEST_COUNT \
+  --strategy $strategy
 ```
 
 Spawn via Task tool with the script's stdout as the prompt:
@@ -158,6 +196,9 @@ Spawn via Task tool with the script's stdout as the prompt:
 - team_name: "$specName-parallel"
 - mode: bypassPermissions
 - run_in_background: true
+- **isolation parameter**: Read `strategy` from dispatch-state.json:
+  - If `"file-ownership"`: **DO NOT** set `isolation: "worktree"`. All teammates work in the same project root directory. Worktree isolation would create divergent branches that never get merged.
+  - If `"worktree"`: **DO** set `isolation: "worktree"`. Each teammate gets an isolated git worktree branch. Requires `/ralph-parallel:merge` after all agents complete.
 
 Spawn ALL non-blocked groups simultaneously (parallel Task calls).
 
@@ -180,20 +221,23 @@ Spawn ALL non-blocked groups simultaneously (parallel Task calls).
    b. Read qualityCommands from .dispatch-state.json
    c. Run qualityCommands.build (if available)
    d. Run qualityCommands.test (if available)
-   e. If build/test FAIL: message affected teammates with error output.
+   e. Run qualityCommands.lint (if available)
+   f. If build/test/lint FAIL: message affected teammates with error output.
       Do NOT mark phase complete. Teammates must fix.
-   f. If all pass: mark verify task completed, message Phase N+1 teammates: "Proceed"
+   g. If all pass: mark verify task completed, message Phase N+1 teammates: "Proceed"
 
 5. SERIAL TASKS: After Phase 2, execute serial tasks yourself
 
 6. FINAL VERIFY: Run Phase 2 verify checkpoint
 
 7. CLEANUP:
-   a. Shut down teammates (SendMessage shutdown_request)
-   b. File-ownership: set status = "merged" (no /merge needed)
-   c. Worktree: leave as "dispatched" (needs /merge)
-   d. TeamDelete
-   e. "ALL_PARALLEL_COMPLETE — $totalTasks tasks done."
+   a. Mark completed tasks in tasks.md:
+      `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/mark-tasks-complete.py --dispatch-state specs/$specName/.dispatch-state.json --tasks-md specs/$specName/tasks.md`
+   b. Shut down teammates (SendMessage shutdown_request)
+   c. File-ownership: set status = "merged" (no /merge needed)
+   d. Worktree: leave as "dispatched" (needs /merge)
+   e. TeamDelete
+   f. "ALL_PARALLEL_COMPLETE — $totalTasks tasks done."
 ```
 
 The dispatch-coordinator.sh Stop hook will re-inject this context if compaction occurs.

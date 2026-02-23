@@ -34,20 +34,21 @@ class TestBuildQualitySection:
     def test_with_typecheck(self):
         lines = build_quality_section({"typecheck": "npx tsc --noEmit"})
         text = "\n".join(lines)
-        assert "After EACH task, run typecheck" in text
+        assert "Typecheck:" in text
         assert "npx tsc --noEmit" in text
 
     def test_with_test_runner(self):
         lines = build_quality_section({"test": "pytest"})
         text = "\n".join(lines)
-        assert "Write at least one test" in text
+        assert "Full test suite:" in text
         assert "pytest" in text
+        assert "Zero regressions policy" in text
 
     def test_with_build_only(self):
         lines = build_quality_section({"build": "make build"})
         text = "\n".join(lines)
-        assert "Verify your code builds" in text
-        assert "Write at least one test" not in text
+        assert "Build:" in text
+        assert "make build" in text
 
     def test_no_commands(self):
         lines = build_quality_section({})
@@ -70,6 +71,32 @@ class TestBuildPromptIntegration:
         quality_pos = prompt.index("Quality Checks")
         rules_pos = prompt.index("## Rules")
         assert ownership_pos < quality_pos < rules_pos
+
+
+class TestWorktreeStrategy:
+    def test_worktree_file_ownership_section(self):
+        group = _make_group()
+        prompt = build_prompt(group, "test-spec", "/tmp", ["#1"], strategy="worktree")
+        assert "WORKTREE MODE" in prompt
+        assert "isolated git worktree" in prompt
+        assert "STRICTLY ENFORCED" not in prompt
+        assert "PreToolUse hook" not in prompt
+
+    def test_file_ownership_default(self):
+        group = _make_group()
+        prompt = build_prompt(group, "test-spec", "/tmp", ["#1"], strategy="file-ownership")
+        assert "STRICTLY ENFORCED" in prompt
+        assert "WORKTREE MODE" not in prompt
+
+    def test_worktree_has_create_from_scratch_note(self):
+        group = _make_group()
+        prompt = build_prompt(group, "test-spec", "/tmp", ["#1"], strategy="worktree")
+        assert "create them from scratch" in prompt
+
+    def test_worktree_has_post_merge_skip_note(self):
+        group = _make_group()
+        prompt = build_prompt(group, "test-spec", "/tmp", ["#1"], strategy="worktree")
+        assert "post-merge" in prompt
 
 
 class TestQualityCommandsCLI:
