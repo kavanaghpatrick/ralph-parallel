@@ -121,15 +121,70 @@ def _discover_rust(root: Path) -> dict:
     return result
 
 
-def discover_quality_commands(project_root: str) -> dict:
-    """Discover available quality commands from project config files.
+def parse_quality_commands_from_tasks(content: str) -> dict:
+    """Parse Quality Commands section from tasks.md content.
 
-    Checks ecosystems in order: Node.js, Python, Makefile, Rust.
-    First non-null value wins per slot.
+    Looks for a fenced code block under '## Quality Commands' with lines like:
+        build: cargo build --package forge-runtime
+        test: cargo test --package forge-runtime --lib
+        lint: cargo clippy -- -D warnings
+
+    Returns dict with slots as keys and commands as values.
+    This is the PRIMARY source — auto-discovery is fallback only.
+    """
+    result = {}
+    valid_slots = {"typecheck", "build", "test", "lint", "dev"}
+    in_section = False
+    in_code_block = False
+
+    for line in content.split('\n'):
+        # Detect the Quality Commands heading
+        if re.match(r'^##\s+Quality\s+Commands', line, re.IGNORECASE):
+            in_section = True
+            continue
+
+        # Stop at next heading
+        if in_section and re.match(r'^##\s+', line) and not re.match(r'^##\s+Quality', line, re.IGNORECASE):
+            break
+
+        if not in_section:
+            continue
+
+        # Track code fence
+        if line.strip().startswith('```'):
+            in_code_block = not in_code_block
+            continue
+
+        if in_code_block:
+            # Parse "slot: command" lines
+            m = re.match(r'^(\w+):\s*(.+)', line.strip())
+            if m:
+                slot = m.group(1).lower()
+                cmd = m.group(2).strip()
+                if slot in valid_slots and cmd:
+                    result[slot] = cmd
+
+    return result
+
+
+def discover_quality_commands(project_root: str, tasks_content: str = '') -> dict:
+    """Discover available quality commands.
+
+    Priority: tasks.md Quality Commands section > project config auto-discovery.
+    This ensures monorepo structures (where Cargo.toml/package.json is not at
+    the project root) still get correct quality commands.
     """
     result = {"typecheck": None, "build": None, "test": None, "lint": None, "dev": None}
-    root = Path(project_root)
 
+    # Primary: parse from tasks.md Quality Commands section
+    if tasks_content:
+        parsed = parse_quality_commands_from_tasks(tasks_content)
+        for slot, val in parsed.items():
+            if val:
+                result[slot] = val
+
+    # Fallback: auto-discover from project config files (only fills null slots)
+    root = Path(project_root)
     for discover_fn in [_discover_node, _discover_python, _discover_makefile, _discover_rust]:
         partial = discover_fn(root)
         for slot, val in partial.items():
@@ -314,16 +369,28 @@ def parse_tasks(content: str) -> list[dict]:
 
 
 def extract_files(body: str) -> list[str]:
-    """Extract file paths from **Files**: line."""
-    m = re.search(r'\*\*Files\*\*:\s*(.+)', body)
-    if not m:
-        return []
-    raw = m.group(1)
+    """Extract file paths from **Files**: line (single-line or multi-line format)."""
     files = []
-    for part in raw.split(','):
-        f = part.strip().strip('`').strip()
-        if f:
-            files.append(f)
+    lines = body.split('\n')
+    for i, line in enumerate(lines):
+        if '**Files**:' not in line:
+            continue
+        # Check for inline files on the same line: **Files**: `a`, `b`
+        after = re.search(r'\*\*Files\*\*:\s*(.+)', line)
+        if after and '`' in after.group(1):
+            files = re.findall(r'`([^`]+)`', after.group(1))
+            return files
+        # Multi-line format: **Files**:\n    - `path` (annotation)
+        for following in lines[i + 1:]:
+            stripped = following.strip()
+            if not stripped:
+                break  # Blank line ends Files block
+            if stripped.startswith('- **') or stripped.startswith('**'):
+                break  # Next field ends Files block
+            m = re.search(r'`([^`]+)`', stripped)
+            if m:
+                files.append(m.group(1))
+        return files
     return files
 
 
@@ -611,14 +678,29 @@ def _format_result(groups, serial_tasks, verify_tasks, all_tasks, incomplete,
         for st in serial_tasks
     ]
 
-    # Format groups
-    result_groups = []
+    # Format groups — generate names then deduplicate collisions
+    raw_entries = []
     for i, g in enumerate(groups):
         if not g['tasks']:
             continue
         task_phases = sorted(set(t['phase'] for t in g['tasks']))
-        # Use predefined name if available, otherwise auto-name
-        name = g.get('predefinedName') or name_group(list(g['ownedFiles']), i)
+        base_name = g.get('predefinedName') or name_group(list(g['ownedFiles']), i)
+        raw_entries.append((i, g, task_phases, base_name))
+
+    # Detect duplicate names and append index to all instances
+    name_counts = {}
+    for _, _, _, base_name in raw_entries:
+        name_counts[base_name] = name_counts.get(base_name, 0) + 1
+
+    result_groups = []
+    name_counters = {}
+    for i, g, task_phases, base_name in raw_entries:
+        if name_counts[base_name] > 1:
+            idx = name_counters.get(base_name, 0)
+            name_counters[base_name] = idx + 1
+            name = f"{base_name}-{idx}"
+        else:
+            name = base_name
         result_groups.append({
             'index': i,
             'name': name,
@@ -839,7 +921,7 @@ def main():
     # Infer project root from tasks.md path (walk up 2 dirs from specs/$name/tasks.md)
     tasks_path_resolved = tasks_path.resolve()
     project_root = str(tasks_path_resolved.parent.parent.parent)
-    quality_commands = discover_quality_commands(project_root)
+    quality_commands = discover_quality_commands(project_root, tasks_content=content)
     verify_quality = classify_verify_commands(tasks)
 
     # Pass content so partition_tasks can check for pre-defined groups

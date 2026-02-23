@@ -57,7 +57,8 @@ def build_quality_section(quality_commands: dict, baseline_test_count: int = 0) 
 
 
 def build_prompt(group: dict, spec_name: str, project_root: str, task_ids: list[str],
-                 quality_commands: dict = None, baseline_test_count: int = 0) -> str:
+                 quality_commands: dict = None, baseline_test_count: int = 0,
+                 strategy: str = 'file-ownership') -> str:
     """Build the complete teammate prompt for a group."""
     lines = []
 
@@ -66,6 +67,7 @@ def build_prompt(group: dict, spec_name: str, project_root: str, task_ids: list[
     owned_files = group.get('ownedFiles', [])
     has_multi_phases = group.get('hasMultiplePhases', False)
     phases = group.get('phases', [1])
+    is_worktree = strategy == 'worktree'
 
     # Identity
     lines.append(f'You are the "{name}" teammate for the {spec_name} spec parallel execution.')
@@ -114,17 +116,34 @@ def build_prompt(group: dict, spec_name: str, project_root: str, task_ids: list[
         lines.append('')
 
     # File ownership
-    lines.append('## File Ownership — STRICTLY ENFORCED')
-    lines.append(f'You ONLY modify these files:')
-    for f in owned_files:
-        lines.append(f'- `{f}`')
-    lines.append('')
-    lines.append('You may read other files but NEVER write outside your ownership list.')
-    lines.append('Before writing ANY file, verify it is in your ownership list above.')
-    lines.append('If you need changes to a file you don\'t own, message the lead —')
-    lines.append('do NOT make the change yourself. Ownership violations will be')
-    lines.append('detected by the PreToolUse hook and blocked automatically.')
-    lines.append('')
+    if is_worktree:
+        lines.append('## File Ownership — WORKTREE MODE')
+        lines.append('You are working in an **isolated git worktree** on your own branch.')
+        lines.append('All files are available to you — there are no ownership restrictions.')
+        lines.append('')
+        lines.append('Your primary files (from task assignments):')
+        for f in owned_files:
+            lines.append(f'- `{f}`')
+        lines.append('')
+        lines.append('**Important worktree notes:**')
+        lines.append('- Files from your tasks may NOT exist on HEAD yet — create them from scratch.')
+        lines.append('- You have a complete copy of the repo. Read existing files for context.')
+        lines.append('- Your branch will be merged after all teammates complete.')
+        lines.append('- Tasks marked as post-merge (requiring other groups\' work) should be SKIPPED.')
+        lines.append('  Message the lead: "Skipping task X.Y — requires post-merge integration."')
+        lines.append('')
+    else:
+        lines.append('## File Ownership — STRICTLY ENFORCED')
+        lines.append(f'You ONLY modify these files:')
+        for f in owned_files:
+            lines.append(f'- `{f}`')
+        lines.append('')
+        lines.append('You may read other files but NEVER write outside your ownership list.')
+        lines.append('Before writing ANY file, verify it is in your ownership list above.')
+        lines.append('If you need changes to a file you don\'t own, message the lead —')
+        lines.append('do NOT make the change yourself. Ownership violations will be')
+        lines.append('detected by the PreToolUse hook and blocked automatically.')
+        lines.append('')
 
     # Quality Checks
     if quality_commands is None:
@@ -172,6 +191,8 @@ def main():
     parser.add_argument('--task-ids', required=True, help='Comma-separated TaskList IDs (e.g., "#1,#2,#3")')
     parser.add_argument('--quality-commands', default='{}', help='JSON of quality commands')
     parser.add_argument('--baseline-test-count', type=int, default=0, help='Baseline test count from dispatch snapshot')
+    parser.add_argument('--strategy', default='file-ownership', choices=['file-ownership', 'worktree'],
+                        help='Isolation strategy (default: file-ownership)')
     args = parser.parse_args()
 
     # Read partition JSON
@@ -197,7 +218,8 @@ def main():
 
     prompt = build_prompt(group, args.spec_name, args.project_root, task_ids,
                           quality_commands=quality_commands,
-                          baseline_test_count=args.baseline_test_count)
+                          baseline_test_count=args.baseline_test_count,
+                          strategy=args.strategy)
     print(prompt)
 
 
