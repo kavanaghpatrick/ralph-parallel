@@ -9,6 +9,16 @@
 
 set -euo pipefail
 
+# Read hook input (must be first -- stdin is consumed once)
+INPUT=$(cat)
+SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null) || SESSION_ID=""
+
+# Best-effort: export session_id for dispatch.md to read
+# Works on fresh start, broken on resume (#24775) -- auto-reclaim compensates
+if [ -n "${CLAUDE_ENV_FILE:-}" ] && [ -n "$SESSION_ID" ]; then
+  echo "CLAUDE_SESSION_ID=$SESSION_ID" >> "$CLAUDE_ENV_FILE" 2>/dev/null || true
+fi
+
 # Find project root (handles both main repo and worktrees)
 GIT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 
