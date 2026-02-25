@@ -86,6 +86,23 @@ if [ "$DISPATCH_ACTIVE" = true ]; then
     fi
   fi
 
+  # Auto-reclaim: update coordinatorSessionId when session changes
+  if [ -n "$SESSION_ID" ]; then
+    COORD_SID=$(jq -r '.coordinatorSessionId // empty' "$DISPATCH_FILE" 2>/dev/null) || COORD_SID=""
+
+    if [ -n "$COORD_SID" ] && [ "$COORD_SID" != "$SESSION_ID" ] && [ "$TEAM_EXISTS" = true ]; then
+      # Session changed (resume/restart) + team active = auto-reclaim
+      jq --arg sid "$SESSION_ID" '.coordinatorSessionId = $sid' "$DISPATCH_FILE" > "${DISPATCH_FILE}.tmp" \
+        && mv "${DISPATCH_FILE}.tmp" "$DISPATCH_FILE"
+      echo "ralph-parallel: Auto-reclaimed dispatch for '$ACTIVE_SPEC' (session changed)"
+    elif [ -z "$COORD_SID" ] && [ "$TEAM_EXISTS" = true ]; then
+      # Legacy dispatch (no field) -- stamp current session
+      jq --arg sid "$SESSION_ID" '.coordinatorSessionId = $sid' "$DISPATCH_FILE" > "${DISPATCH_FILE}.tmp" \
+        && mv "${DISPATCH_FILE}.tmp" "$DISPATCH_FILE"
+      echo "ralph-parallel: Stamped session ID on legacy dispatch for '$ACTIVE_SPEC'"
+    fi
+  fi
+
   echo "ralph-parallel: Active parallel dispatch for spec '$ACTIVE_SPEC'"
   echo "ralph-parallel: Status: $COMPLETED_GROUPS/$TOTAL_GROUPS groups complete ($STRATEGY strategy)"
   echo "ralph-parallel: Groups: $GROUP_NAMES"
