@@ -97,6 +97,7 @@ Display the output to the user. If `--dry-run`: STOP here.
 2. Write dispatch state from the partition JSON:
    {
      "dispatchedAt": "<ISO timestamp>",
+     "coordinatorSessionId": "$CLAUDE_SESSION_ID",
      "strategy": "$strategy",
      "maxTeammates": $maxTeammates,
      "groups": <from partition JSON>,
@@ -107,6 +108,8 @@ Display the output to the user. If `--dry-run`: STOP here.
      "status": "dispatched",
      "completedGroups": []
    }
+
+   Read `$CLAUDE_SESSION_ID` from the environment. If empty or unset, write `"coordinatorSessionId": null` and output a warning: "Warning: CLAUDE_SESSION_ID not available — session isolation disabled for this dispatch. Auto-reclaim on next SessionStart will fix this."
 ```
 
 ## Step 4.5: Capture Baseline Test Snapshot (via script)
