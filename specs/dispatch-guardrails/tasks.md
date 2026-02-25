@@ -1,7 +1,7 @@
 ---
 spec: dispatch-guardrails
 phase: tasks
-total_tasks: 12
+total_tasks: 11
 created: 2026-02-22T22:30:00Z
 generated: auto
 ---
