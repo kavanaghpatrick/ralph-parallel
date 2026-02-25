@@ -96,6 +96,17 @@ if [ "$STATUS" != "dispatched" ]; then
   exit 0
 fi
 
+# --- Session isolation (team-name branch) ---
+if [ -n "$TEAM_NAME" ] && [ -f "$DISPATCH_STATE" ]; then
+  COORD_SID=$(jq -r '.coordinatorSessionId // empty' "$DISPATCH_STATE" 2>/dev/null) || COORD_SID=""
+  if [ -n "$COORD_SID" ] && [ -n "$SESSION_ID" ]; then
+    if [ "$COORD_SID" != "$SESSION_ID" ]; then
+      exit 0
+    fi
+  fi
+  # Missing COORD_SID or empty SESSION_ID: legacy behavior (block)
+fi
+
 # Active dispatch — check completion
 TOTAL_GROUPS=$(jq '.groups | length' "$DISPATCH_STATE" 2>/dev/null) || exit 0
 COMPLETED_GROUPS=$(jq '.completedGroups | length' "$DISPATCH_STATE" 2>/dev/null) || COMPLETED_GROUPS=0
