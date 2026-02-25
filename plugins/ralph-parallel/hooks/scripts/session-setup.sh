@@ -9,6 +9,16 @@
 
 set -euo pipefail
 
+# Read hook input (must be first -- stdin is consumed once)
+INPUT=$(cat)
+SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null) || SESSION_ID=""
+
+# Best-effort: export session_id for dispatch.md to read
+# Works on fresh start, broken on resume (#24775) -- auto-reclaim compensates
+if [ -n "${CLAUDE_ENV_FILE:-}" ] && [ -n "$SESSION_ID" ]; then
+  echo "CLAUDE_SESSION_ID=$SESSION_ID" >> "$CLAUDE_ENV_FILE" 2>/dev/null || true
+fi
+
 # Find project root (handles both main repo and worktrees)
 GIT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 
@@ -73,6 +83,23 @@ if [ "$DISPATCH_ACTIVE" = true ]; then
     MEMBER_COUNT=$(jq '.members | length' "$TEAM_CONFIG" 2>/dev/null) || MEMBER_COUNT=0
     if [ "$MEMBER_COUNT" -gt 0 ]; then
       TEAM_EXISTS=true
+    fi
+  fi
+
+  # Auto-reclaim: update coordinatorSessionId when session changes
+  if [ -n "$SESSION_ID" ]; then
+    COORD_SID=$(jq -r '.coordinatorSessionId // empty' "$DISPATCH_FILE" 2>/dev/null) || COORD_SID=""
+
+    if [ -n "$COORD_SID" ] && [ "$COORD_SID" != "$SESSION_ID" ] && [ "$TEAM_EXISTS" = true ]; then
+      # Session changed (resume/restart) + team active = auto-reclaim
+      jq --arg sid "$SESSION_ID" '.coordinatorSessionId = $sid' "$DISPATCH_FILE" > "${DISPATCH_FILE}.tmp" \
+        && mv "${DISPATCH_FILE}.tmp" "$DISPATCH_FILE"
+      echo "ralph-parallel: Auto-reclaimed dispatch for '$ACTIVE_SPEC' (session changed)"
+    elif [ -z "$COORD_SID" ] && [ "$TEAM_EXISTS" = true ]; then
+      # Legacy dispatch (no field) -- stamp current session
+      jq --arg sid "$SESSION_ID" '.coordinatorSessionId = $sid' "$DISPATCH_FILE" > "${DISPATCH_FILE}.tmp" \
+        && mv "${DISPATCH_FILE}.tmp" "$DISPATCH_FILE"
+      echo "ralph-parallel: Stamped session ID on legacy dispatch for '$ACTIVE_SPEC'"
     fi
   fi
 

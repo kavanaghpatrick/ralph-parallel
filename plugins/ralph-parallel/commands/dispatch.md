@@ -16,8 +16,10 @@ From `$ARGUMENTS`, extract:
 - **--strategy**: Isolation strategy - `file-ownership` (default) or `worktree`
 - **--dry-run**: Show partition plan without creating team
 - **--abort**: Cancel active dispatch, shut down teammates, clean up state
+- **--reclaim**: Reclaim coordinator ownership for this session
 
 If `--abort`: skip to Abort Handler section below.
+If `--reclaim`: skip to Reclaim Handler section below.
 
 ## Step 1: Resolve Spec
 
@@ -97,6 +99,7 @@ Display the output to the user. If `--dry-run`: STOP here.
 2. Write dispatch state from the partition JSON:
    {
      "dispatchedAt": "<ISO timestamp>",
+     "coordinatorSessionId": "$CLAUDE_SESSION_ID",
      "strategy": "$strategy",
      "maxTeammates": $maxTeammates,
      "groups": <from partition JSON>,
@@ -107,6 +110,8 @@ Display the output to the user. If `--dry-run`: STOP here.
      "status": "dispatched",
      "completedGroups": []
    }
+
+   Read `$CLAUDE_SESSION_ID` from the environment. If empty or unset, write `"coordinatorSessionId": null` and output a warning: "Warning: CLAUDE_SESSION_ID not available — session isolation disabled for this dispatch. Auto-reclaim on next SessionStart will fix this."
 ```
 
 ## Step 4.5: Capture Baseline Test Snapshot (via script)
@@ -253,6 +258,22 @@ When `--abort` flag is present:
 4. TeamDelete
 5. Set status = "aborted", abortedAt = ISO timestamp
 6. Output abort summary
+```
+
+## Reclaim Handler
+
+When `--reclaim` flag is present:
+
+```text
+1. Resolve spec (same as Step 1)
+2. Read specs/$specName/.dispatch-state.json
+   - If missing: "No dispatch state found for '$specName'."
+   - If status != "dispatched": "No active dispatch to reclaim (status: $status)."
+3. Read $CLAUDE_SESSION_ID env var
+   - If empty: "Session ID unavailable. Restart Claude to get a fresh session ID."
+4. Update via jq:
+   jq --arg sid "$CLAUDE_SESSION_ID" '.coordinatorSessionId = $sid' "$stateFile" > tmp && mv tmp "$stateFile"
+5. Output: "Reclaimed dispatch for '$specName' -- this session is now coordinator."
 ```
 
 <mandatory>

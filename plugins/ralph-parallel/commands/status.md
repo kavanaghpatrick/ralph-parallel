@@ -24,6 +24,12 @@ From `$ARGUMENTS`, extract:
      Run /ralph-parallel:dispatch to start parallel execution."
 3. Read specs/$specName/tasks.md for current task states
 4. Read specs/$specName/.ralph-state.json if exists
+5. Read coordinatorSessionId from dispatch state
+6. Compare against $CLAUDE_SESSION_ID env var:
+   - Both present + match: isCoordinator = true, display "Coordinator: this session"
+   - Both present + mismatch: isCoordinator = false, display "Coordinator: different session"
+   - coordinatorSessionId missing/null: isCoordinator = null, display "Coordinator: unknown (legacy)"
+   - $CLAUDE_SESSION_ID empty: isCoordinator = null, display "Coordinator: unknown (env unavailable)"
 ```
 
 ## Step 2: Compute Progress
@@ -65,6 +71,7 @@ Parallel Status: $specName
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Strategy: $strategy | Dispatched: $timestamp
+Coordinator: this session | different session | unknown (legacy)
 Overall: $completedTasks/$totalTasks tasks ($percentage%)
 
 Group 1: api-layer
@@ -132,6 +139,8 @@ When `--json` flag present, output the raw dispatch state merged with live progr
     }
   ],
   "serialTasks": { "completed": 0, "total": 2 },
-  "verifyTasks": { "completed": 0, "total": 2 }
+  "verifyTasks": { "completed": 0, "total": 2 },
+  "coordinatorSessionId": "<value or null>",
+  "isCoordinator": true | false | null
 }
 ```
