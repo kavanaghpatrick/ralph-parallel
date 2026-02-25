@@ -40,21 +40,47 @@ if [ -n "$TEAM_NAME" ]; then
   SPEC_DIR="$PROJECT_ROOT/specs/$SPEC_NAME"
   DISPATCH_STATE="$SPEC_DIR/.dispatch-state.json"
 else
-  # No team context (session restart?) — scan for active dispatches
+  # No team context (session restart?) -- scan ALL active dispatches
   DISPATCH_STATE=""
   SPEC_NAME=""
+  FOUND_ANY_ACTIVE=false
+  FOUND_MY_DISPATCH=false
+
   for state_file in "$PROJECT_ROOT"/specs/*/.dispatch-state.json; do
-    if [ -f "$state_file" ]; then
-      FILE_STATUS=$(jq -r '.status // "unknown"' "$state_file" 2>/dev/null) || continue
-      if [ "$FILE_STATUS" = "dispatched" ]; then
-        DISPATCH_STATE="$state_file"
-        SPEC_NAME=$(basename "$(dirname "$state_file")")
-        SPEC_DIR="$PROJECT_ROOT/specs/$SPEC_NAME"
-        break
-      fi
+    [ -f "$state_file" ] || continue
+    FILE_STATUS=$(jq -r '.status // "unknown"' "$state_file" 2>/dev/null) || continue
+    [ "$FILE_STATUS" = "dispatched" ] || continue
+
+    FOUND_ANY_ACTIVE=true
+    COORD_SID=$(jq -r '.coordinatorSessionId // empty' "$state_file" 2>/dev/null) || COORD_SID=""
+
+    if [ -z "$COORD_SID" ]; then
+      # Legacy dispatch (no coordinatorSessionId) -- block any session
+      FOUND_MY_DISPATCH=true
+      DISPATCH_STATE="$state_file"
+      SPEC_NAME=$(basename "$(dirname "$state_file")")
+      SPEC_DIR="$PROJECT_ROOT/specs/$SPEC_NAME"
+      break
+    elif [ -z "$SESSION_ID" ]; then
+      # Empty session_id in input -- treat as legacy (block)
+      FOUND_MY_DISPATCH=true
+      DISPATCH_STATE="$state_file"
+      SPEC_NAME=$(basename "$(dirname "$state_file")")
+      SPEC_DIR="$PROJECT_ROOT/specs/$SPEC_NAME"
+      break
+    elif [ "$COORD_SID" = "$SESSION_ID" ]; then
+      # This session owns this dispatch -- block
+      FOUND_MY_DISPATCH=true
+      DISPATCH_STATE="$state_file"
+      SPEC_NAME=$(basename "$(dirname "$state_file")")
+      SPEC_DIR="$PROJECT_ROOT/specs/$SPEC_NAME"
+      break
     fi
+    # Mismatch -- continue scanning other specs
   done
-  if [ -z "$DISPATCH_STATE" ]; then
+
+  if [ "$FOUND_MY_DISPATCH" = false ]; then
+    # No active dispatch belongs to this session (or no active dispatches at all)
     exit 0
   fi
 fi
