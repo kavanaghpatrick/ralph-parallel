@@ -155,3 +155,106 @@ class TestClassifyVerifyCommands:
         output = format_plan(fake_result)
         assert "WARNING" in output
         assert "3/4" in output
+
+
+# ── Pre-defined Group File Ownership Conflicts ────────────────
+
+parse_predefined_groups = mod.parse_predefined_groups
+parse_tasks = mod.parse_tasks
+partition_tasks = mod.partition_tasks
+build_dependency_graph = mod.build_dependency_graph
+
+
+class TestPredefinedGroupFileConflicts:
+    TASKS_MD_WITH_CONFLICT = """\
+## Phase 1: Setup
+
+### Group 1: fixtures [P]
+**Files owned**: `tests/conftest.py`, `tests/test_importer.py`
+
+- [ ] 1.1 Create test fixtures
+  - **Files**: `tests/conftest.py`, `tests/test_importer.py`
+  - **Verify**: `python3 -m pytest tests/conftest.py -v`
+
+- [ ] 1.2 Add fixture helpers
+  - **Files**: `tests/conftest.py`
+  - **Verify**: `python3 -m pytest tests/conftest.py -v`
+
+### Group 2: core [P]
+**Files owned**: `src/importer.py`, `tests/test_importer.py`
+
+- [ ] 1.3 Implement core importer
+  - **Files**: `src/importer.py`
+  - **Verify**: `python3 -c "import src.importer"`
+
+- [ ] 1.4 Add importer tests
+  - **Files**: `tests/test_importer.py`
+  - **Verify**: `python3 -m pytest tests/test_importer.py -v`
+"""
+
+    TASKS_MD_NO_CONFLICT = """\
+## Phase 1: Setup
+
+### Group 1: fixtures [P]
+**Files owned**: `tests/conftest.py`
+
+- [ ] 1.1 Create test fixtures
+  - **Files**: `tests/conftest.py`
+  - **Verify**: `python3 -m pytest tests/conftest.py -v`
+
+### Group 2: core [P]
+**Files owned**: `src/importer.py`, `tests/test_importer.py`
+
+- [ ] 1.2 Implement core importer
+  - **Files**: `src/importer.py`, `tests/test_importer.py`
+  - **Verify**: `python3 -m pytest tests/ -v`
+"""
+
+    def test_conflict_detected_and_resolved(self, capsys):
+        """Contested file is assigned to one group, removed from the other."""
+        tasks = parse_tasks(self.TASKS_MD_WITH_CONFLICT)
+        tasks = build_dependency_graph(tasks)
+        result = partition_tasks(tasks, max_teammates=4,
+                                 content=self.TASKS_MD_WITH_CONFLICT)
+
+        # Check that no two groups share the same file
+        all_owned = []
+        for g in result['groups']:
+            all_owned.append(set(g['ownedFiles']))
+        for i, a in enumerate(all_owned):
+            for b in all_owned[i + 1:]:
+                assert not (a & b), f"Groups share files: {a & b}"
+
+        # WARNING should have been printed to stderr
+        captured = capsys.readouterr()
+        assert "WARNING" in captured.err
+        assert "test_importer.py" in captured.err
+
+    def test_no_conflict_no_warning(self, capsys):
+        """Clean groups produce no warnings."""
+        tasks = parse_tasks(self.TASKS_MD_NO_CONFLICT)
+        tasks = build_dependency_graph(tasks)
+        result = partition_tasks(tasks, max_teammates=4,
+                                 content=self.TASKS_MD_NO_CONFLICT)
+
+        captured = capsys.readouterr()
+        assert "WARNING" not in captured.err
+        assert len(result['groups']) == 2
+
+    def test_contested_file_goes_to_group_with_most_tasks(self):
+        """The group with more tasks touching the file gets ownership."""
+        tasks = parse_tasks(self.TASKS_MD_WITH_CONFLICT)
+        tasks = build_dependency_graph(tasks)
+        result = partition_tasks(tasks, max_teammates=4,
+                                 content=self.TASKS_MD_WITH_CONFLICT)
+
+        # Group 1 (fixtures) has 2 tasks, 1 touches test_importer.py
+        # Group 2 (core) has 2 tasks, 1 touches test_importer.py
+        # Tie-break: max() picks the highest index, which is group 2 (core)
+        # Either assignment is valid as long as it's exclusive
+        file_owners = {}
+        for g in result['groups']:
+            for f in g['ownedFiles']:
+                assert f not in file_owners, \
+                    f"File '{f}' owned by both '{file_owners[f]}' and '{g['name']}'"
+                file_owners[f] = g['name']

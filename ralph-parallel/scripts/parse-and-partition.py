@@ -514,8 +514,47 @@ def _build_groups_from_predefined(predefined, all_tasks, parallel_tasks, max_tea
     are group-internal barriers, not global ones. Cross-group task dependencies
     from build_dependency_graph are stripped since group boundaries define
     the real parallelism.
+
+    File ownership conflicts are detected and resolved: each contested file is
+    assigned to the group with the most tasks touching it, and tasks from other
+    groups that ONLY touch contested files are moved to serial.
     """
     task_map = {t['id']: t for t in all_tasks}
+
+    # --- Detect and resolve file ownership conflicts ---
+    file_to_groups = {}  # file -> list of (group_index, group)
+    for i, pg in enumerate(predefined[:max_teammates]):
+        for f in pg['files']:
+            file_to_groups.setdefault(f, []).append(i)
+
+    contested_files = {f: gidxs for f, gidxs in file_to_groups.items() if len(gidxs) > 1}
+
+    if contested_files:
+        # For each contested file, pick the group with the most tasks referencing it
+        file_owner = {}
+        for f, gidxs in contested_files.items():
+            best_group = max(gidxs, key=lambda gi: sum(
+                1 for tid in predefined[gi]['taskIds']
+                if tid in task_map and f in task_map[tid].get('files', [])
+            ))
+            file_owner[f] = best_group
+
+        # Remove contested files from non-owner groups
+        for f, owner_idx in file_owner.items():
+            loser_names = []
+            for gi in contested_files[f]:
+                if gi != owner_idx:
+                    predefined[gi]['files'] = [
+                        x for x in predefined[gi]['files'] if x != f
+                    ]
+                    loser_names.append(predefined[gi]['name'])
+            winner = predefined[owner_idx]['name']
+            print(f"WARNING: File ownership conflict on '{f}' "
+                  f"(claimed by {len(contested_files[f])} groups). "
+                  f"Assigned to '{winner}', removed from: {', '.join(loser_names)}",
+                  file=sys.stderr)
+
+    # --- Build groups ---
     groups = []
     grouped_ids = set()
 
@@ -542,6 +581,23 @@ def _build_groups_from_predefined(predefined, all_tasks, parallel_tasks, max_tea
 
     # Tasks not in any pre-defined group become serial
     serial = [t for t in parallel_tasks if t['id'] not in grouped_ids]
+
+    # Move tasks whose files are ALL contested-and-reassigned to serial
+    if contested_files:
+        reassigned_files = set(file_owner.keys())
+        for group in groups:
+            safe_tasks = []
+            for task in group['tasks']:
+                task_files = set(task.get('files', []))
+                if task_files and task_files.issubset(reassigned_files) and \
+                        not task_files.issubset(group['ownedFiles']):
+                    serial.append(task)
+                    print(f"WARNING: Task {task['id']} serialized — all its files "
+                          f"were reassigned from this group", file=sys.stderr)
+                else:
+                    safe_tasks.append(task)
+            group['tasks'] = safe_tasks
+
     return groups, serial
 
 
