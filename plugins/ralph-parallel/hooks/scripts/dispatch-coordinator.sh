@@ -16,6 +16,14 @@ set -euo pipefail
 INPUT=$(cat)
 CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null) || CWD=""
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null) || SESSION_ID=""
+STOP_HOOK_ACTIVE=$(echo "$INPUT" | jq -r '.stop_hook_active // false' 2>/dev/null) || STOP_HOOK_ACTIVE="false"
+
+# If this turn was already triggered by a previous stop hook (exit 2),
+# allow stop to prevent re-triggering loops. The coordinator already
+# received the coordination context on the previous stop hook invocation.
+if [ "$STOP_HOOK_ACTIVE" = "true" ]; then
+  exit 0
+fi
 
 # Determine project root
 if [ -n "$CWD" ]; then
@@ -43,7 +51,6 @@ else
   # No team context (session restart?) -- scan ALL active dispatches
   DISPATCH_STATE=""
   SPEC_NAME=""
-  FOUND_ANY_ACTIVE=false
   FOUND_MY_DISPATCH=false
 
   for state_file in "$PROJECT_ROOT"/specs/*/.dispatch-state.json; do
@@ -51,36 +58,43 @@ else
     FILE_STATUS=$(jq -r '.status // "unknown"' "$state_file" 2>/dev/null) || continue
     [ "$FILE_STATUS" = "dispatched" ] || continue
 
-    FOUND_ANY_ACTIVE=true
     COORD_SID=$(jq -r '.coordinatorSessionId // empty' "$state_file" 2>/dev/null) || COORD_SID=""
+    SCAN_SPEC=$(basename "$(dirname "$state_file")")
 
-    if [ -z "$COORD_SID" ]; then
-      # Legacy dispatch (no coordinatorSessionId) -- block any session
+    # In scan mode (no TEAM_NAME), only match dispatches we can positively
+    # identify as belonging to this session via coordinatorSessionId.
+    # Legacy dispatches (no coordinatorSessionId) and empty SESSION_ID are
+    # ambiguous — verify the team actually exists before claiming ownership.
+    if [ -n "$COORD_SID" ] && [ -n "$SESSION_ID" ] && [ "$COORD_SID" = "$SESSION_ID" ]; then
+      # Positive session match — this dispatch belongs to us
       FOUND_MY_DISPATCH=true
       DISPATCH_STATE="$state_file"
-      SPEC_NAME=$(basename "$(dirname "$state_file")")
-      SPEC_DIR="$PROJECT_ROOT/specs/$SPEC_NAME"
-      break
-    elif [ -z "$SESSION_ID" ]; then
-      # Empty session_id in input -- treat as legacy (block)
-      FOUND_MY_DISPATCH=true
-      DISPATCH_STATE="$state_file"
-      SPEC_NAME=$(basename "$(dirname "$state_file")")
-      SPEC_DIR="$PROJECT_ROOT/specs/$SPEC_NAME"
-      break
-    elif [ "$COORD_SID" = "$SESSION_ID" ]; then
-      # This session owns this dispatch -- block
-      FOUND_MY_DISPATCH=true
-      DISPATCH_STATE="$state_file"
-      SPEC_NAME=$(basename "$(dirname "$state_file")")
+      SPEC_NAME="$SCAN_SPEC"
       SPEC_DIR="$PROJECT_ROOT/specs/$SPEC_NAME"
       break
     fi
-    # Mismatch -- continue scanning other specs
+
+    # Ambiguous ownership (legacy or empty session_id) — only claim if
+    # team config exists (proves this is a live dispatch, not stale)
+    if [ -z "$COORD_SID" ] || [ -z "$SESSION_ID" ]; then
+      SCAN_TEAM_CONFIG="$HOME/.claude/teams/${SCAN_SPEC}-parallel/config.json"
+      if [ -f "$SCAN_TEAM_CONFIG" ]; then
+        SCAN_MEMBERS=$(jq '.members | length' "$SCAN_TEAM_CONFIG" 2>/dev/null) || SCAN_MEMBERS=0
+        if [ "$SCAN_MEMBERS" -gt 0 ]; then
+          FOUND_MY_DISPATCH=true
+          DISPATCH_STATE="$state_file"
+          SPEC_NAME="$SCAN_SPEC"
+          SPEC_DIR="$PROJECT_ROOT/specs/$SPEC_NAME"
+          break
+        fi
+      fi
+      # No team config or empty members — stale dispatch, skip it
+    fi
+    # coordinatorSessionId mismatch — continue scanning
   done
 
   if [ "$FOUND_MY_DISPATCH" = false ]; then
-    # No active dispatch belongs to this session (or no active dispatches at all)
+    # No active dispatch belongs to this session (or only stale dispatches found)
     exit 0
   fi
 fi

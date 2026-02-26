@@ -224,6 +224,21 @@ test_T5_empty_session_id_blocks() {
   end_test "Empty session_id blocks"
 }
 
+test_T13_stop_hook_active_allows() {
+  begin_test "T-13"
+  local tmpdir; tmpdir=$(setup_project)
+  write_dispatch_state "$tmpdir" "sess-A" "dispatched"
+  write_team_config "test-spec" 1
+
+  local exit_code=0
+  echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":true,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook > /dev/null 2>&1 || exit_code=$?
+
+  assert_exit_code "$exit_code" 0 "stop_hook_active=true should allow stop (prevent re-trigger loop)"
+  cleanup_team_config "test-spec"; rm -rf "$tmpdir"
+  end_test "stop_hook_active=true allows stop"
+}
+
 # --- Unit Tests: session-setup.sh (SessionStart Hook) ---
 
 test_T6_auto_reclaim_on_mismatch_with_team() {
@@ -491,8 +506,40 @@ test_EC4_team_config_zero_members() {
   end_test "Zero members skips auto-reclaim"
 }
 
-test_EC5_concurrent_starts() {
+test_EC5_stale_dispatch_no_team_allows() {
   begin_test "EC-5"
+  local tmpdir; tmpdir=$(setup_project)
+  # Legacy dispatch (no coordinatorSessionId) with no team config = stale
+  write_dispatch_state "$tmpdir" "" "dispatched"
+  cleanup_team_config "test-spec"
+
+  local exit_code=0
+  echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook > /dev/null 2>&1 || exit_code=$?
+
+  assert_exit_code "$exit_code" 0 "stale dispatch (no team) via scan should allow stop"
+  rm -rf "$tmpdir"
+  end_test "Stale dispatch (no team) allows stop"
+}
+
+test_EC6_legacy_dispatch_with_team_blocks() {
+  begin_test "EC-6"
+  local tmpdir; tmpdir=$(setup_project)
+  # Legacy dispatch (no coordinatorSessionId) BUT team exists = live dispatch
+  write_dispatch_state "$tmpdir" "" "dispatched"
+  write_team_config "test-spec" 1
+
+  local exit_code=0
+  echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook > /dev/null 2>&1 || exit_code=$?
+
+  assert_exit_code "$exit_code" 2 "legacy dispatch with live team should block"
+  cleanup_team_config "test-spec"; rm -rf "$tmpdir"
+  end_test "Legacy dispatch with team blocks"
+}
+
+test_EC7_concurrent_starts() {
+  begin_test "EC-7"
   local tmpdir; tmpdir=$(setup_git_project)
   write_dispatch_state "$tmpdir" "sess-OLD" "dispatched"
   write_team_config "test-spec" 1
@@ -520,6 +567,7 @@ test_T2_mismatching_session_allowed
 test_T3_legacy_no_coord_blocks
 test_T4_non_active_dispatch_allows
 test_T5_empty_session_id_blocks
+test_T13_stop_hook_active_allows
 echo ""
 
 echo "--- SessionStart Hook Unit Tests ---"
@@ -545,7 +593,9 @@ test_EC1_two_specs_different_coordinators
 test_EC2_corrupted_json
 test_EC3_env_file_bad_path
 test_EC4_team_config_zero_members
-test_EC5_concurrent_starts
+test_EC5_stale_dispatch_no_team_allows
+test_EC6_legacy_dispatch_with_team_blocks
+test_EC7_concurrent_starts
 echo ""
 
 # --- Summary ---
