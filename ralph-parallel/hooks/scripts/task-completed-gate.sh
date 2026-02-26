@@ -101,7 +101,7 @@ while IFS= read -r line; do
   fi
 
   if [ "$IN_TASK" = true ] && echo "$line" | grep -qE "\*\*Verify\*\*:"; then
-    VERIFY_CMD=$(echo "$line" | sed 's/.*\*\*Verify\*\*:[[:space:]]*//' | sed 's/`//g' | xargs)
+    VERIFY_CMD=$(echo "$line" | sed 's/.*\*\*Verify\*\*:[[:space:]]*//' | sed 's/`//g' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
     break
   fi
 done < "$SPEC_DIR/tasks.md"
@@ -153,7 +153,7 @@ while IFS= read -r fline; do
   fi
   if [ "$IN_TASK" = true ] && echo "$fline" | grep -qE "^\s*- \[.\] [0-9]"; then break; fi
   if [ "$IN_TASK" = true ] && echo "$fline" | grep -qE "\*\*Files\*\*:"; then
-    TASK_FILES=$(echo "$fline" | sed 's/.*\*\*Files\*\*:[[:space:]]*//' | sed 's/`//g' | xargs)
+    TASK_FILES=$(echo "$fline" | sed 's/.*\*\*Files\*\*:[[:space:]]*//' | sed 's/`//g' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
     break
   fi
 done < "$SPEC_DIR/tasks.md"
