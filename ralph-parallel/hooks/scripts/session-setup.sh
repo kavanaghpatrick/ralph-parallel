@@ -109,10 +109,20 @@ if [ "$DISPATCH_ACTIVE" = true ]; then
   echo "ralph-parallel: Completed: $COMPLETED_LIST"
 
   if [ "$TEAM_EXISTS" = false ] && [ "$COMPLETED_GROUPS" -lt "$TOTAL_GROUPS" ]; then
+    # Team is dead and work is incomplete — mark dispatch as stale so
+    # the Stop hook doesn't trap the user in a blocking loop.
+    jq --arg reason "team_lost" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      '.status = "stale" | .staleReason = $reason | .staleSince = $ts' \
+      "$DISPATCH_FILE" > "${DISPATCH_FILE}.tmp" \
+      && mv "${DISPATCH_FILE}.tmp" "$DISPATCH_FILE"
+    # Restore gc.auto since dispatch is no longer active
+    CURRENT_GC=$(git config --get gc.auto 2>/dev/null || echo "default")
+    if [ "$CURRENT_GC" = "0" ]; then
+      git config --unset gc.auto 2>/dev/null || true
+    fi
     echo ""
-    echo "ralph-parallel: WARNING — Dispatch is active but no team exists. Teammates were lost."
-    echo "ralph-parallel: You MUST re-run /ralph-parallel:dispatch to re-spawn teammates."
-    echo "ralph-parallel: Do NOT execute the remaining tasks yourself — re-dispatch for parallel execution."
+    echo "ralph-parallel: Dispatch for '$ACTIVE_SPEC' marked stale (team lost, $COMPLETED_GROUPS/$TOTAL_GROUPS groups done)."
+    echo "ralph-parallel: Run /ralph-parallel:dispatch to resume, or /ralph-parallel:cancel to abort."
   else
     echo "ralph-parallel: Run /ralph-parallel:status to see progress"
   fi

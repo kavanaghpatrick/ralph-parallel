@@ -93,6 +93,7 @@ Display the output to the user. If `--dry-run`: STOP here.
 ```text
 1. Check specs/$specName/.dispatch-state.json:
    - If status "dispatched": warn, set to "superseded"
+   - If status "stale": OK (team was lost), overwrite
    - If status "merging": error, run /ralph-parallel:merge --abort first
    - If "merged"/"superseded"/"aborted": OK, overwrite
 
@@ -252,7 +253,7 @@ The dispatch-coordinator.sh Stop hook will re-inject this context if compaction 
 When `--abort` flag is present:
 
 ```text
-1. Read .dispatch-state.json — error if missing or status != "dispatched"
+1. Read .dispatch-state.json — error if missing or status not in ("dispatched", "stale")
 2. Read ~/.claude/teams/$specName-parallel/config.json for teammates
 3. SendMessage shutdown_request to each teammate (30s timeout)
 4. TeamDelete
