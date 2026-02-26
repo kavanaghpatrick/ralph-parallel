@@ -19,6 +19,11 @@ _discover_node = mod._discover_node
 _discover_python = mod._discover_python
 _discover_makefile = mod._discover_makefile
 _discover_rust = mod._discover_rust
+_task_id_key = mod._task_id_key
+parse_quality_commands_from_tasks = mod.parse_quality_commands_from_tasks
+parse_tasks = mod.parse_tasks
+build_dependency_graph = mod.build_dependency_graph
+partition_tasks = mod.partition_tasks
 
 
 # ── Quality Command Discovery ──────────────────────────────────
@@ -160,9 +165,6 @@ class TestClassifyVerifyCommands:
 # ── Pre-defined Group File Ownership Conflicts ────────────────
 
 parse_predefined_groups = mod.parse_predefined_groups
-parse_tasks = mod.parse_tasks
-partition_tasks = mod.partition_tasks
-build_dependency_graph = mod.build_dependency_graph
 
 
 class TestPredefinedGroupFileConflicts:
@@ -258,3 +260,136 @@ class TestPredefinedGroupFileConflicts:
                 assert f not in file_owners, \
                     f"File '{f}' owned by both '{file_owners[f]}' and '{g['name']}'"
                 file_owners[f] = g['name']
+
+
+# ── Task ID Numeric Comparison (FR-1) ────────────────────────
+
+
+class TestTaskIdKey:
+    """FR-1: Numeric task ID comparison."""
+
+    def test_basic_comparison(self):
+        assert _task_id_key("1.10") > _task_id_key("1.2")
+        assert _task_id_key("1.1") < _task_id_key("1.2")
+        assert _task_id_key("2.1") > _task_id_key("1.9")
+
+    def test_sort_order(self):
+        ids = ["1.1", "1.10", "1.11", "1.2", "1.9", "2.1"]
+        sorted_ids = sorted(ids, key=_task_id_key)
+        assert sorted_ids == ["1.1", "1.2", "1.9", "1.10", "1.11", "2.1"]
+
+    def test_verify_dependency_ordering(self):
+        """12-task phase with VERIFY -- dependencies use numeric comparison."""
+        lines = ["## Phase 1: Test\n"]
+        for i in range(1, 12):
+            lines.append(f"- [ ] 1.{i} [P] Task {i}\n")
+            lines.append(f"  - **Files**: `file{i}.ts`\n")
+            lines.append(f"  - **Verify**: `echo ok`\n")
+        lines.append("- [ ] 1.12 [VERIFY] Verify phase 1\n")
+        lines.append("  - **Verify**: `echo verify`\n")
+        tasks_md = "\n".join(lines)
+
+        tasks = parse_tasks(tasks_md)
+        tasks = build_dependency_graph(tasks)
+        verify = [t for t in tasks if 'VERIFY' in t['markers']][0]
+        # All 11 non-VERIFY tasks should be dependencies of the VERIFY task
+        assert len(verify['dependencies']) == 11
+
+
+# ── Quality Commands Multi-Format Parsing (FR-2) ─────────────
+
+
+class TestQualityCommandsParsing:
+    """FR-2: Multi-format QC parsing."""
+
+    def test_bold_markdown_format(self):
+        content = "## Quality Commands\n- **Build**: `cargo build`\n- **Test**: `cargo test`\n- **Lint**: `cargo clippy`\n"
+        result = parse_quality_commands_from_tasks(content)
+        assert result == {"build": "cargo build", "test": "cargo test", "lint": "cargo clippy"}
+
+    def test_code_fenced_format(self):
+        content = "## Quality Commands\n```\nbuild: cargo build\ntest: cargo test\n```\n"
+        result = parse_quality_commands_from_tasks(content)
+        assert result == {"build": "cargo build", "test": "cargo test"}
+
+    def test_bare_dash_format(self):
+        content = "## Quality Commands\n- Build: `cargo build`\n- Test: cargo test\n"
+        result = parse_quality_commands_from_tasks(content)
+        assert result["build"] == "cargo build"
+        assert result["test"] == "cargo test"
+
+    def test_na_excluded(self):
+        content = "## Quality Commands\n- **Build**: N/A\n- **Test**: `cargo test`\n"
+        result = parse_quality_commands_from_tasks(content)
+        assert "build" not in result
+        assert result["test"] == "cargo test"
+
+    def test_bold_markdown_without_dash(self):
+        content = "## Quality Commands\n**Build**: `make build`\n**Test**: `make test`\n"
+        result = parse_quality_commands_from_tasks(content)
+        assert result == {"build": "make build", "test": "make test"}
+
+    def test_na_case_insensitive(self):
+        content = "## Quality Commands\n- **Build**: n/a\n- **Lint**: N/a\n- **Test**: `pytest`\n"
+        result = parse_quality_commands_from_tasks(content)
+        assert "build" not in result
+        assert "lint" not in result
+        assert result["test"] == "pytest"
+
+    def test_stops_at_next_heading(self):
+        content = "## Quality Commands\n- **Build**: `make`\n## Phase 1\n- **Test**: `pytest`\n"
+        result = parse_quality_commands_from_tasks(content)
+        assert result == {"build": "make"}
+        assert "test" not in result
+
+
+# ── Worktree Empty Guard (FR-7) ──────────────────────────────
+
+
+class TestWorktreeEmptyGuard:
+    """FR-7: Empty parallel_tasks guard."""
+
+    def test_all_verify_tasks(self):
+        """Partition with only VERIFY tasks should not crash."""
+        tasks_md = "## Phase 1\n- [x] 1.1 [P] Already done\n  - **Verify**: `echo ok`\n- [x] 1.2 [VERIFY] Verify\n  - **Verify**: `echo ok`\n"
+        tasks = parse_tasks(tasks_md)
+        tasks = build_dependency_graph(tasks)
+        # All tasks are complete, so partition should exit early (code 2)
+        # or return no groups. Either way, no crash.
+        result = partition_tasks(tasks, max_teammates=4, strategy='worktree')
+        # Result is None when all tasks complete (script exits with code 2)
+        # or has 0 groups
+        assert result is None or len(result.get('groups', [])) == 0
+
+
+# ── Rebalance Ownership (FR-8) ───────────────────────────────
+
+
+class TestRebalanceOwnership:
+    """FR-8: Rebalance preserves file ownership for remaining tasks."""
+
+    def test_shared_files_preserved(self):
+        """After rebalance, files used by remaining tasks stay in ownedFiles."""
+        # 5 tasks with varying files, 2 teammates - forces rebalancing
+        tasks_md = (
+            "## Phase 1: Test\n"
+            "- [ ] 1.1 [P] Task A\n  - **Files**: `shared.ts`, `a.ts`\n  - **Verify**: `echo ok`\n"
+            "- [ ] 1.2 [P] Task B\n  - **Files**: `shared.ts`, `b.ts`\n  - **Verify**: `echo ok`\n"
+            "- [ ] 1.3 [P] Task C\n  - **Files**: `c.ts`\n  - **Verify**: `echo ok`\n"
+            "- [ ] 1.4 [P] Task D\n  - **Files**: `d.ts`\n  - **Verify**: `echo ok`\n"
+            "- [ ] 1.5 [P] Task E\n  - **Files**: `e.ts`\n  - **Verify**: `echo ok`\n"
+        )
+        tasks = parse_tasks(tasks_md)
+        tasks = build_dependency_graph(tasks)
+        result = partition_tasks(tasks, max_teammates=2, strategy='file-ownership')
+        assert result is not None
+        # Build task-to-files mapping from parsed tasks
+        task_files = {t['id']: set(t['files']) for t in tasks}
+        # Verify every group owns all files its tasks reference
+        for g in result['groups']:
+            owned = set(g['ownedFiles'])
+            for task_id in g['tasks']:
+                if task_id in task_files:
+                    for f in task_files[task_id]:
+                        assert f in owned, \
+                            f"Task {task_id} needs '{f}' but group '{g['name']}' doesn't own it"

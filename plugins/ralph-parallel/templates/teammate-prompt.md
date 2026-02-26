@@ -1,6 +1,6 @@
 # Teammate Prompt Reference
 
-Reference guide for constructing per-group teammate prompts. Used by `/ralph-parallel:dispatch` Step 7 when spawning teammates.
+Reference guide for constructing per-group teammate prompts. Used by `/ralph-parallel:dispatch` Step 6 when spawning teammates.
 
 ## Prompt Structure
 
@@ -36,7 +36,7 @@ Each teammate prompt should include these sections:
 |-------|--------|---------|
 | Group name | Partition result | "data-models" |
 | Spec name | Dispatch state | "user-auth" |
-| TaskList IDs | Created in Step 7 (one per spec task) | "#1, #2, #3" |
+| TaskList IDs | Created in Step 5 (one per spec task) | "#1, #2, #3" |
 | Task list | tasks.md content | Full task blocks |
 | Owned files | Partition result | ["src/models/User.ts", ...] |
 | Dependencies | Partition result | [] or ["api-layer"] |

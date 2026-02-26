@@ -29,12 +29,8 @@ if [ -z "$TASK_ID" ]; then
   exit 0
 fi
 
-# Determine project root
-if [ -n "$CWD" ]; then
-  PROJECT_ROOT="$CWD"
-else
-  PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
-fi
+# Determine project root (git rev-parse is canonical; CWD fallback for non-git envs)
+PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || PROJECT_ROOT="${CWD:-$(pwd)}"
 
 # --- Spec Resolution ---
 # Priority 1: team_name (e.g., "user-auth-parallel" → "user-auth")
@@ -111,13 +107,10 @@ if [ -z "$VERIFY_CMD" ]; then
   exit 0
 fi
 
-# Run the verify command from project root
-cd "$PROJECT_ROOT"
-
 # --- Stage 1: Verify command with output capture ---
 echo "ralph-parallel: Verifying task $COMPLETED_SPEC_TASK: $VERIFY_CMD" >&2
 
-VERIFY_OUTPUT=$(eval "$VERIFY_CMD" 2>&1) && VERIFY_EXIT=0 || VERIFY_EXIT=$?
+VERIFY_OUTPUT=$(cd "$PROJECT_ROOT" && eval "$VERIFY_CMD" 2>&1) && VERIFY_EXIT=0 || VERIFY_EXIT=$?
 if [ $VERIFY_EXIT -ne 0 ]; then
   echo "QUALITY GATE FAILED for task $COMPLETED_SPEC_TASK ($TASK_SUBJECT)" >&2
   echo "Verify command failed (exit $VERIFY_EXIT): $VERIFY_CMD" >&2
@@ -133,7 +126,7 @@ TYPECHECK_CMD=$(jq -r '.qualityCommands.typecheck // empty' "$DISPATCH_STATE" 2>
 
 if [ -n "$TYPECHECK_CMD" ]; then
   echo "ralph-parallel: Running supplemental typecheck: $TYPECHECK_CMD" >&2
-  TC_OUTPUT=$(eval "$TYPECHECK_CMD" 2>&1) && TC_EXIT=0 || TC_EXIT=$?
+  TC_OUTPUT=$(cd "$PROJECT_ROOT" && eval "$TYPECHECK_CMD" 2>&1) && TC_EXIT=0 || TC_EXIT=$?
   if [ $TC_EXIT -ne 0 ]; then
     echo "SUPPLEMENTAL CHECK FAILED: typecheck" >&2
     echo "Command: $TYPECHECK_CMD (exit $TC_EXIT)" >&2
@@ -186,7 +179,7 @@ if [ -n "$BUILD_CMD" ]; then
 
   if [ $((COMPLETED_COUNT % BUILD_INTERVAL)) -eq 0 ] || [ "$COMPLETED_COUNT" -le 1 ]; then
     echo "ralph-parallel: Running periodic build check ($COMPLETED_COUNT tasks done): $BUILD_CMD" >&2
-    BUILD_OUTPUT=$(eval "$BUILD_CMD" 2>&1) && BUILD_EXIT=0 || BUILD_EXIT=$?
+    BUILD_OUTPUT=$(cd "$PROJECT_ROOT" && eval "$BUILD_CMD" 2>&1) && BUILD_EXIT=0 || BUILD_EXIT=$?
     if [ $BUILD_EXIT -ne 0 ]; then
       echo "SUPPLEMENTAL CHECK FAILED: build (periodic, every ${BUILD_INTERVAL} tasks)" >&2
       echo "Command: $BUILD_CMD (exit $BUILD_EXIT)" >&2
@@ -240,7 +233,7 @@ if [ -n "$TEST_CMD" ]; then
 
   if [ $((COMPLETED_COUNT % TEST_INTERVAL)) -eq 0 ] || [ "$COMPLETED_COUNT" -le 1 ]; then
     echo "ralph-parallel: Running test suite regression check ($COMPLETED_COUNT tasks done): $TEST_CMD" >&2
-    TEST_OUTPUT=$(eval "$TEST_CMD" 2>&1) && TEST_EXIT=0 || TEST_EXIT=$?
+    TEST_OUTPUT=$(cd "$PROJECT_ROOT" && eval "$TEST_CMD" 2>&1) && TEST_EXIT=0 || TEST_EXIT=$?
     if [ $TEST_EXIT -ne 0 ]; then
       echo "REGRESSION CHECK FAILED: test suite" >&2
       echo "Command: $TEST_CMD (exit $TEST_EXIT)" >&2
@@ -300,7 +293,7 @@ if [ -n "$LINT_CMD" ]; then
 
   if [ $((COMPLETED_COUNT % LINT_INTERVAL)) -eq 0 ] || [ "$COMPLETED_COUNT" -le 1 ]; then
     echo "ralph-parallel: Running periodic lint check ($COMPLETED_COUNT tasks done): $LINT_CMD" >&2
-    LINT_OUTPUT=$(eval "$LINT_CMD" 2>&1) && LINT_EXIT=0 || LINT_EXIT=$?
+    LINT_OUTPUT=$(cd "$PROJECT_ROOT" && eval "$LINT_CMD" 2>&1) && LINT_EXIT=0 || LINT_EXIT=$?
     if [ $LINT_EXIT -ne 0 ]; then
       echo "SUPPLEMENTAL CHECK FAILED: lint (periodic, every ${LINT_INTERVAL} tasks)" >&2
       echo "Command: $LINT_CMD (exit $LINT_EXIT)" >&2

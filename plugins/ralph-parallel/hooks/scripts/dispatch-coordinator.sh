@@ -25,12 +25,8 @@ if [ "$STOP_HOOK_ACTIVE" = "true" ]; then
   exit 0
 fi
 
-# Determine project root
-if [ -n "$CWD" ]; then
-  PROJECT_ROOT="$CWD"
-else
-  PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
-fi
+# Determine project root (git rev-parse is canonical; CWD fallback for non-git envs)
+PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || PROJECT_ROOT="${CWD:-$(pwd)}"
 
 # Only enforce for team leads (not teammates)
 AGENT_NAME="${CLAUDE_CODE_AGENT_NAME:-}"
@@ -192,7 +188,7 @@ NEXT ACTIONS:
 1. Check TaskList for teammate progress
 2. If waiting for teammates: they may be idle — check and send status messages
 3. When all Phase N tasks done: run the verify checkpoint yourself
-4. When all tasks done: update dispatch-state.json status to "merged", shut down teammates, TeamDelete
+4. When all tasks done: run mark-tasks-complete.py, set status="merged", shut down teammates, TeamDelete
 
 Do NOT stop until all tasks are complete and the team is cleaned up.
 PROMPT

@@ -30,6 +30,10 @@ From `$ARGUMENTS`, extract:
    - Both present + mismatch: isCoordinator = false, display "Coordinator: different session"
    - coordinatorSessionId missing/null: isCoordinator = null, display "Coordinator: unknown (legacy)"
    - $CLAUDE_SESSION_ID empty: isCoordinator = null, display "Coordinator: unknown (env unavailable)"
+7. If status is "stale": Display stale notice:
+   "Dispatch STALE for '$specName' (reason: $staleReason, since: $staleSince)."
+   "Run /ralph-parallel:dispatch to re-dispatch, or /ralph-parallel:dispatch --abort to cancel."
+   Include staleSince, staleReason from dispatch state. Skip Steps 2-3 (no live team to query).
 ```
 
 ## Step 2: Compute Progress
