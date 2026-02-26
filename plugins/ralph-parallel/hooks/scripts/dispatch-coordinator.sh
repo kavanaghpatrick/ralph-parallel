@@ -160,6 +160,12 @@ else
 fi
 
 if [ "$TEAM_LOST" = true ]; then
+  if [ -z "$TEAM_NAME" ]; then
+    # Scan mode: no active team context. This is a stale dispatch from a
+    # previous session — don't block the user's unrelated work.
+    exit 0
+  fi
+  # Team-name branch: coordinator's team died mid-dispatch. Block and inform.
   cat >&2 <<PROMPT
 ACTIVE DISPATCH DETECTED — TEAMMATES LOST
 
