@@ -1,7 +1,7 @@
 ---
 description: Analyze spec tasks and dispatch to Agent Teams for parallel execution
 argument-hint: [spec-name] [--max-teammates 4] [--strategy file-ownership|worktree] [--dry-run] [--abort]
-allowed-tools: [Read, Write, Edit, Bash, Task, AskUserQuestion, Glob, Grep]
+allowed-tools: [Read, Write, Edit, Bash, Task, AskUserQuestion, Glob, Grep, SendMessage, TeamCreate, TeamDelete]
 ---
 
 # Dispatch
@@ -66,7 +66,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/parse-and-partition.py \
 ```
 
 **Exit codes**:
-- 0: Success — JSON partition on stdout. Save to a variable.
+- 0: Success — JSON partition on stdout. Save to a variable AND save to /tmp/$specName-partition.json for use by build-teammate-prompt.py in Step 6.
 - 1: tasks.md format error → Display stderr diagnostics (parse-and-partition.py now reports specific format issues with line numbers and fix suggestions). Do NOT just say "Run /ralph-specum:tasks" — the diagnostics will indicate the actual problem.
 - 2: All complete → "All tasks complete. Nothing to dispatch."
 - 3: Single task → "Only 1 task remaining. Run /ralph-specum:implement instead."
@@ -83,6 +83,7 @@ Run with `--format` flag to get human-readable output:
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/parse-and-partition.py \
   --tasks-md specs/$specName/tasks.md \
   --max-teammates $maxTeammates \
+  --strategy $strategy \
   --format
 ```
 
@@ -220,7 +221,8 @@ Spawn ALL non-blocked groups simultaneously (parallel Task calls).
 3. STALL DETECTION: No message for 10+ minutes?
    a. Send status check message
    b. Wait 5 more minutes
-   c. If still no response: reassign tasks to self or serialize
+   c. If still no response: re-spawn the stalled teammate with remaining tasks.
+      If re-spawn fails, serialize remaining tasks and warn user.
 
 4. PHASE GATE: When ALL Phase N tasks done:
    a. Run Phase N verify checkpoint task
@@ -232,9 +234,9 @@ Spawn ALL non-blocked groups simultaneously (parallel Task calls).
       Do NOT mark phase complete. Teammates must fix.
    g. If all pass: mark verify task completed, message Phase N+1 teammates: "Proceed"
 
-5. SERIAL TASKS: After Phase 2, execute serial tasks yourself
+5. SERIAL TASKS: After ALL parallel groups complete (all phases), execute serial tasks yourself
 
-6. FINAL VERIFY: Run Phase 2 verify checkpoint
+6. FINAL VERIFY: Run the last phase's verify checkpoint
 
 7. CLEANUP:
    a. Mark completed tasks in tasks.md:

@@ -177,7 +177,8 @@ def build_prompt(group: dict, spec_name: str, project_root: str, task_ids: list[
     lines.append(f'Signed-off-by: {name}')
     lines.append('```')
     lines.append('')
-    lines.append('Use `git commit -s` flag or manually append the trailer to every commit.')
+    lines.append('Append the Signed-off-by trailer manually to every commit message.')
+    lines.append('Do NOT use `git commit -s` -- it produces the wrong format for provenance tracking.')
 
     return '\n'.join(lines)
 

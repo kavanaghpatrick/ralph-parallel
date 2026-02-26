@@ -28,6 +28,7 @@ From `$ARGUMENTS`, extract:
    - "merged" → "Already merged. Nothing to do."
    - "superseded" → "This dispatch was superseded by a newer one. Nothing to merge."
    - "merging" + no --continue → "Merge in progress. Use --continue to resume or --abort to cancel."
+   - "stale" → "This dispatch is stale (team lost at $staleSince). Run /ralph-parallel:dispatch to re-dispatch or /ralph-parallel:dispatch --abort to cancel."
 ```
 
 ## Step 2: Verify Completion

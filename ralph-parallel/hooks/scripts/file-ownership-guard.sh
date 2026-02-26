@@ -35,13 +35,11 @@ if [ -z "$AGENT_NAME" ]; then
   exit 0
 fi
 
-# Find project root
-CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null) || CWD=""
-if [ -n "$CWD" ]; then
-  PROJECT_ROOT="$CWD"
-else
-  PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
-fi
+# Find project root (git rev-parse is canonical; CWD fallback for non-git envs)
+PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
+  CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null) || CWD=""
+  PROJECT_ROOT="${CWD:-$(pwd)}"
+}
 
 # Find dispatch state — check team name first, then .current-spec
 TEAM_NAME="${CLAUDE_CODE_TEAM_NAME:-}"
@@ -79,7 +77,7 @@ if [ -z "$OWNED_FILES" ]; then
 fi
 
 # Normalize file path to be relative to project root for comparison
-REL_PATH="${FILE_PATH#$PROJECT_ROOT/}"
+REL_PATH="${FILE_PATH#"$PROJECT_ROOT"/}"
 
 # Check if file is in owned files list
 ALLOWED=false

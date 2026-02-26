@@ -33,6 +33,12 @@ except ModuleNotFoundError:
         tomllib = None  # type: ignore[assignment]
 
 
+def _task_id_key(task_id: str) -> tuple[int, int]:
+    """Convert 'X.Y' to (X, Y) for correct numeric comparison."""
+    parts = task_id.split('.')
+    return (int(parts[0]), int(parts[1]))
+
+
 # ──────────────────────────────────────────────────────────────────
 # Quality Command Discovery
 # ──────────────────────────────────────────────────────────────────
@@ -124,10 +130,10 @@ def _discover_rust(root: Path) -> dict:
 def parse_quality_commands_from_tasks(content: str) -> dict:
     """Parse Quality Commands section from tasks.md content.
 
-    Looks for a fenced code block under '## Quality Commands' with lines like:
-        build: cargo build --package forge-runtime
-        test: cargo test --package forge-runtime --lib
-        lint: cargo clippy -- -D warnings
+    Supports three formats (checked in priority order):
+    1. Bold markdown: - **Build**: `cmd`
+    2. Code-fenced:   ```\\nbuild: cmd\\n```
+    3. Bare dash:     - Build: `cmd` or - Build: cmd
 
     Returns dict with slots as keys and commands as values.
     This is the PRIMARY source — auto-discovery is fallback only.
@@ -156,13 +162,38 @@ def parse_quality_commands_from_tasks(content: str) -> dict:
             continue
 
         if in_code_block:
-            # Parse "slot: command" lines
+            # Parse "slot: command" lines inside code fence
             m = re.match(r'^(\w+):\s*(.+)', line.strip())
             if m:
                 slot = m.group(1).lower()
                 cmd = m.group(2).strip()
                 if slot in valid_slots and cmd:
                     result[slot] = cmd
+            continue
+
+        stripped = line.strip()
+
+        # Bold markdown: - **Build**: `cmd` or **Build**: `cmd`
+        m = re.match(r'^[-*]?\s*\*\*(\w+)\*\*:\s*`([^`]+)`', stripped)
+        if m:
+            slot = m.group(1).lower()
+            cmd = m.group(2).strip()
+            if slot in valid_slots and cmd and cmd.upper() != 'N/A':
+                result[slot] = cmd
+            continue
+
+        # Bold markdown with N/A (no backticks): - **Build**: N/A
+        m = re.match(r'^[-*]?\s*\*\*(\w+)\*\*:\s*N/?A\b', stripped, re.IGNORECASE)
+        if m:
+            continue  # Explicitly skip N/A entries
+
+        # Bare dash: - Build: `cmd` or - Build: cmd
+        m = re.match(r'^-\s+(\w+):\s*`?([^`]+)`?\s*$', stripped)
+        if m:
+            slot = m.group(1).lower()
+            cmd = m.group(2).strip()
+            if slot in valid_slots and cmd and cmd.upper() != 'N/A':
+                result[slot] = cmd
 
     return result
 
@@ -437,12 +468,12 @@ def build_dependency_graph(tasks: list[dict]) -> list[dict]:
     for t in tasks:
         if 'VERIFY' in t['markers']:
             for other in tasks:
-                if other['phase'] == t['phase'] and other['id'] < t['id']:
+                if other['phase'] == t['phase'] and _task_id_key(other['id']) < _task_id_key(t['id']):
                     if other['id'] not in t['dependencies']:
                         t['dependencies'].append(other['id'])
             # All tasks after VERIFY in same phase depend on it
             for other in tasks:
-                if other['phase'] == t['phase'] and other['id'] > t['id']:
+                if other['phase'] == t['phase'] and _task_id_key(other['id']) > _task_id_key(t['id']):
                     if t['id'] not in other['dependencies']:
                         other['dependencies'].append(t['id'])
 
@@ -608,7 +639,10 @@ def _build_groups_worktree(parallel_tasks, max_teammates):
     don't apply. Tasks are distributed round-robin by phase to balance load.
     No tasks are serialized due to file conflicts.
     """
-    parallel_tasks.sort(key=lambda t: (t['phase'], t['id']))
+    if not parallel_tasks:
+        return [], []
+
+    parallel_tasks.sort(key=lambda t: (t['phase'], _task_id_key(t['id'])))
 
     groups = [{'tasks': [], 'ownedFiles': set(), 'dependencies': set()}
               for _ in range(min(max_teammates, len(parallel_tasks)))]
@@ -625,7 +659,7 @@ def _build_groups_worktree(parallel_tasks, max_teammates):
 
 def _build_groups_automatic(parallel_tasks, max_teammates):
     """Build groups via automatic file-ownership partitioning."""
-    parallel_tasks.sort(key=lambda t: (t['phase'], t['id']))
+    parallel_tasks.sort(key=lambda t: (t['phase'], _task_id_key(t['id'])))
 
     groups = []
     file_ownership = {}
@@ -694,7 +728,11 @@ def _rebalance_groups(groups, file_ownership):
             if task_files & groups[smallest]['ownedFiles']:
                 continue
             groups[largest]['tasks'].pop(t_idx)
-            groups[largest]['ownedFiles'] -= task_files
+            # Recompute ownedFiles from remaining tasks (other tasks may share files)
+            remaining_files = set()
+            for remaining_task in groups[largest]['tasks']:
+                remaining_files.update(remaining_task['files'])
+            groups[largest]['ownedFiles'] = remaining_files
             groups[smallest]['tasks'].append(task)
             groups[smallest]['ownedFiles'].update(task_files)
             for f in task_files:

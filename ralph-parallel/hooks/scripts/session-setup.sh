@@ -16,7 +16,7 @@ SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null) || SESSIO
 # Best-effort: export session_id for dispatch.md to read
 # Works on fresh start, broken on resume (#24775) -- auto-reclaim compensates
 if [ -n "${CLAUDE_ENV_FILE:-}" ] && [ -n "$SESSION_ID" ]; then
-  echo "CLAUDE_SESSION_ID=$SESSION_ID" >> "$CLAUDE_ENV_FILE" 2>/dev/null || true
+  echo "export CLAUDE_SESSION_ID=$SESSION_ID" >> "$CLAUDE_ENV_FILE" 2>/dev/null || true
 fi
 
 # Find project root (handles both main repo and worktrees)
@@ -122,7 +122,7 @@ if [ "$DISPATCH_ACTIVE" = true ]; then
     fi
     echo ""
     echo "ralph-parallel: Dispatch for '$ACTIVE_SPEC' marked stale (team lost, $COMPLETED_GROUPS/$TOTAL_GROUPS groups done)."
-    echo "ralph-parallel: Run /ralph-parallel:dispatch to resume, or /ralph-parallel:cancel to abort."
+    echo "ralph-parallel: Run /ralph-parallel:dispatch to resume, or /ralph-parallel:dispatch --abort to cancel."
   else
     echo "ralph-parallel: Run /ralph-parallel:status to see progress"
   fi

@@ -1,6 +1,6 @@
 # Team Prompt Reference
 
-Reference guide for constructing team lead prompts. Used by `/ralph-parallel:dispatch` Step 8 when building the lead coordination loop.
+Reference guide for constructing team lead prompts. Used by `/ralph-parallel:dispatch` Step 7 when building the lead coordination loop.
 
 ## Lead Responsibilities
 
