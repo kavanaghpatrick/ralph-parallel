@@ -106,7 +106,9 @@ cleanup_team_config() {
 
 cleanup_counter_files() {
   rm -f /tmp/ralph-stop-test-spec-* 2>/dev/null || true
+  rm -f /tmp/ralph-stop-test-spec- 2>/dev/null || true
   rm -f /tmp/ralph-stop-spec-* 2>/dev/null || true
+  rm -f /tmp/tsh12_out1 /tmp/tsh12_out2 /tmp/tsh12_err1 /tmp/tsh12_err2 2>/dev/null || true
 }
 
 begin_test() {
@@ -600,6 +602,260 @@ test_TBC1_no_heartbeat_reclaims_normally() {
   end_test "No lastHeartbeat -> reclaims normally (backward compat)"
 }
 
+# --- Test 7 (T-SH7): Block counter file missing/corrupt -> treated as count=0 ---
+
+test_TSH7_counter_file_missing_corrupt() {
+  begin_test "T-SH7"
+  local tmpdir; tmpdir=$(setup_project)
+  write_dispatch_state "$tmpdir" "sess-A" "dispatched"
+  write_team_config "test-spec" 1
+
+  local counter_file="/tmp/ralph-stop-test-spec-sess-A"
+
+  # Scenario A: Counter file missing -- should still block (count=0, first block)
+  rm -f "$counter_file" 2>/dev/null || true
+  local stdout
+  stdout=$(echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" 2>/dev/null) || true
+  assert_stdout_json "$stdout" "block" "" "missing counter file still blocks"
+
+  # Verify counter file was created with count=1
+  local count
+  count=$(cut -d: -f1 "$counter_file" 2>/dev/null) || count="0"
+  assert_true "$([ "$count" = "1" ] && echo true || echo false)" "counter created at 1 after first block"
+
+  # Scenario B: Counter file corrupt (garbage content)
+  echo "GARBAGE_CORRUPT_DATA" > "$counter_file"
+  stdout=$(echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":true,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" 2>/dev/null) || true
+
+  # Corrupt file should be treated as count=0, so this is block 1 (reset)
+  assert_stdout_json "$stdout" "block" "" "corrupt counter file still blocks"
+
+  # Scenario C: Counter file empty
+  : > "$counter_file"
+  stdout=$(echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":true,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" 2>/dev/null) || true
+  assert_stdout_json "$stdout" "block" "" "empty counter file still blocks"
+
+  cleanup_team_config "test-spec"; rm -rf "$tmpdir"
+  end_test "Block counter file missing/corrupt -> treated as count=0"
+}
+
+# --- Test 8 (T-SH8): Block counter survives after safety valve ---
+
+test_TSH8_counter_survives_safety_valve() {
+  begin_test "T-SH8"
+  local tmpdir; tmpdir=$(setup_project)
+  write_dispatch_state "$tmpdir" "sess-A" "dispatched"
+  write_team_config "test-spec" 1
+
+  local counter_file="/tmp/ralph-stop-test-spec-sess-A"
+  local stdout
+
+  # Block 1, 2, 3 (reach MAX_BLOCKS)
+  echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" > /dev/null 2>&1 || true
+  echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":true,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" > /dev/null 2>&1 || true
+  echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":true,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" > /dev/null 2>&1 || true
+
+  # Block 4: safety valve triggers (allow)
+  stdout=$(echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":true,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" 2>/dev/null) || true
+  assert_true "$([ -z "$stdout" ] && echo true || echo false)" "safety valve allows (no stdout)"
+
+  # Counter file should still exist (NOT deleted by safety valve)
+  assert_true "$([ -f "$counter_file" ] && echo true || echo false)" "counter file survives safety valve"
+
+  # Verify counter is at MAX_BLOCKS (3)
+  local count
+  count=$(cut -d: -f1 "$counter_file" 2>/dev/null) || count="0"
+  assert_true "$([ "$count" = "3" ] && echo true || echo false)" "counter at MAX_BLOCKS=3"
+
+  cleanup_team_config "test-spec"; rm -rf "$tmpdir"
+  end_test "Block counter survives after safety valve"
+}
+
+# --- Test 9 (T-SH9): Counter file cleaned up on terminal status ---
+
+test_TSH9_counter_cleanup_terminal_status() {
+  begin_test "T-SH9"
+  local tmpdir; tmpdir=$(setup_project)
+  write_team_config "test-spec" 1
+
+  local counter_file="/tmp/ralph-stop-test-spec-sess-A"
+
+  # Test each terminal status: merged, aborted, stale
+  # Must use CLAUDE_CODE_TEAM_NAME so the script takes the team-name branch
+  # (not scan mode, which skips non-dispatched states in its scan loop)
+  for terminal_status in merged aborted stale; do
+    # Setup: create a dispatch, block once to create counter file
+    write_dispatch_state "$tmpdir" "sess-A" "dispatched"
+    echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+      | (cd "$tmpdir" && env -u CLAUDE_CODE_AGENT_NAME CLAUDE_CODE_TEAM_NAME="test-spec-parallel" bash "$STOP_HOOK") > /dev/null 2>&1 || true
+
+    # Verify counter file exists
+    assert_true "$([ -f "$counter_file" ] && echo true || echo false)" "counter exists before $terminal_status"
+
+    # Transition to terminal status
+    write_dispatch_state "$tmpdir" "sess-A" "$terminal_status"
+    echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+      | (cd "$tmpdir" && env -u CLAUDE_CODE_AGENT_NAME CLAUDE_CODE_TEAM_NAME="test-spec-parallel" bash "$STOP_HOOK") > /dev/null 2>&1 || true
+
+    # Counter file should be cleaned up
+    assert_true "$([ ! -f "$counter_file" ] && echo true || echo false)" "counter cleaned up on $terminal_status"
+  done
+
+  cleanup_team_config "test-spec"; rm -rf "$tmpdir"
+  end_test "Counter file cleaned up on terminal status (merged/aborted/stale)"
+}
+
+# --- Test 10 (T-SH10): Empty SESSION_ID -> counter file at /tmp/ralph-stop-SPECNAME- ---
+
+test_TSH10_empty_session_id_counter() {
+  begin_test "T-SH10"
+  local tmpdir; tmpdir=$(setup_project)
+  write_dispatch_state "$tmpdir" "sess-A" "dispatched"
+  write_team_config "test-spec" 1
+
+  # Counter file for empty session_id: /tmp/ralph-stop-test-spec-
+  local counter_file="/tmp/ralph-stop-test-spec-"
+  rm -f "$counter_file" 2>/dev/null || true
+
+  local stdout exit_code
+  stdout=$(echo "{\"session_id\":\"\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" 2>/dev/null) || true
+  exit_code=$?
+
+  assert_exit_code "$exit_code" 0 "empty session_id exits 0"
+  assert_stdout_json "$stdout" "block" "" "empty session_id blocks"
+
+  # Counter file should be created at the expected path
+  assert_true "$([ -f "$counter_file" ] && echo true || echo false)" "counter file created at /tmp/ralph-stop-test-spec-"
+
+  # Verify counter is functional (second block increments)
+  echo "{\"session_id\":\"\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":true,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" > /dev/null 2>&1 || true
+  local count
+  count=$(cut -d: -f1 "$counter_file" 2>/dev/null) || count="0"
+  assert_true "$([ "$count" = "2" ] && echo true || echo false)" "empty session_id counter increments to 2"
+
+  rm -f "$counter_file" 2>/dev/null || true
+  cleanup_team_config "test-spec"; rm -rf "$tmpdir"
+  end_test "Empty SESSION_ID -> counter file still works"
+}
+
+# --- Test 11 (T-SH11): RALPH_MAX_STOP_BLOCKS env var overrides default 3 ---
+
+test_TSH11_max_blocks_env_override() {
+  begin_test "T-SH11"
+  local tmpdir; tmpdir=$(setup_project)
+  write_dispatch_state "$tmpdir" "sess-A" "dispatched"
+  write_team_config "test-spec" 1
+
+  local stdout
+
+  # Set MAX_BLOCKS to 1 via env var
+  # Block 1: should block (first block uses initial message, no counter in reason)
+  stdout=$(cd "$tmpdir" && echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+    | env -u CLAUDE_CODE_AGENT_NAME -u CLAUDE_CODE_TEAM_NAME RALPH_MAX_STOP_BLOCKS=1 bash "$STOP_HOOK" 2>/dev/null) || true
+  assert_stdout_json "$stdout" "block" "test-spec" "block 1 with MAX=1 (blocks on first attempt)"
+
+  # Block 2: safety valve should trigger (allow) because counter is already at 1 = MAX_BLOCKS
+  stdout=$(cd "$tmpdir" && echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":true,\"last_assistant_message\":\"\"}" \
+    | env -u CLAUDE_CODE_AGENT_NAME -u CLAUDE_CODE_TEAM_NAME RALPH_MAX_STOP_BLOCKS=1 bash "$STOP_HOOK" 2>/dev/null) || true
+  assert_true "$([ -z "$stdout" ] && echo true || echo false)" "safety valve at MAX=1 allows"
+
+  # Reset counter for next sub-test
+  cleanup_counter_files
+
+  # Set MAX_BLOCKS to 5 -- block 5 times, then safety valve on 6th
+  write_dispatch_state "$tmpdir" "sess-A" "dispatched" "test-spec" "3000"
+  for i in 1 2 3 4 5; do
+    local active="false"
+    [ "$i" -gt 1 ] && active="true"
+    stdout=$(cd "$tmpdir" && echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":$active,\"last_assistant_message\":\"\"}" \
+      | env -u CLAUDE_CODE_AGENT_NAME -u CLAUDE_CODE_TEAM_NAME RALPH_MAX_STOP_BLOCKS=5 bash "$STOP_HOOK" 2>/dev/null) || true
+  done
+  # The 5th block should have blocked with "block 5/5"
+  assert_stdout_json "$stdout" "block" "block 5/5" "block 5/5 with MAX=5"
+
+  # 6th attempt: safety valve
+  stdout=$(cd "$tmpdir" && echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":true,\"last_assistant_message\":\"\"}" \
+    | env -u CLAUDE_CODE_AGENT_NAME -u CLAUDE_CODE_TEAM_NAME RALPH_MAX_STOP_BLOCKS=5 bash "$STOP_HOOK" 2>/dev/null) || true
+  assert_true "$([ -z "$stdout" ] && echo true || echo false)" "safety valve at MAX=5 allows"
+
+  cleanup_team_config "test-spec"; rm -rf "$tmpdir"
+  end_test "RALPH_MAX_STOP_BLOCKS env var overrides default 3"
+}
+
+# --- Test 12 (T-SH12): Concurrent stop hook invocations don't crash ---
+
+test_TSH12_concurrent_invocations() {
+  begin_test "T-SH12"
+  local tmpdir; tmpdir=$(setup_project)
+  write_dispatch_state "$tmpdir" "sess-A" "dispatched"
+  write_team_config "test-spec" 1
+
+  # Run two hook invocations concurrently in background
+  local pid1 pid2 exit1 exit2
+
+  echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" > /tmp/tsh12_out1 2>/tmp/tsh12_err1 &
+  pid1=$!
+
+  echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" > /tmp/tsh12_out2 2>/tmp/tsh12_err2 &
+  pid2=$!
+
+  # Wait for both to complete
+  wait $pid1; exit1=$?
+  wait $pid2; exit2=$?
+
+  assert_exit_code "$exit1" 0 "concurrent invocation 1 exits 0"
+  assert_exit_code "$exit2" 0 "concurrent invocation 2 exits 0"
+
+  # Both should have produced valid JSON block output
+  local out1 out2
+  out1=$(cat /tmp/tsh12_out1 2>/dev/null) || out1=""
+  out2=$(cat /tmp/tsh12_out2 2>/dev/null) || out2=""
+  assert_stdout_json "$out1" "block" "" "concurrent 1 produced valid JSON block"
+  assert_stdout_json "$out2" "block" "" "concurrent 2 produced valid JSON block"
+
+  # No stderr from either invocation
+  local err1 err2
+  err1=$(cat /tmp/tsh12_err1 2>/dev/null) || err1=""
+  err2=$(cat /tmp/tsh12_err2 2>/dev/null) || err2=""
+  assert_no_stderr "$err1" "concurrent 1 no stderr"
+  assert_no_stderr "$err2" "concurrent 2 no stderr"
+
+  rm -f /tmp/tsh12_out1 /tmp/tsh12_out2 /tmp/tsh12_err1 /tmp/tsh12_err2
+  cleanup_team_config "test-spec"; rm -rf "$tmpdir"
+  end_test "Concurrent stop hook invocations don't crash"
+}
+
+# --- Backward Compat Tests ---
+
+test_TBC1_no_heartbeat_reclaims_normally() {
+  begin_test "T-BC1"
+  local tmpdir; tmpdir=$(setup_git_project)
+
+  # Dispatch state WITHOUT lastHeartbeat
+  write_dispatch_state "$tmpdir" "sess-OLD" "dispatched"
+  write_team_config "test-spec" 1
+
+  echo "{\"session_id\":\"sess-NEW\",\"source\":\"resume\",\"cwd\":\"$tmpdir\"}" \
+    | run_session_hook "$tmpdir" > /dev/null 2>&1
+
+  assert_json_field "$tmpdir/specs/test-spec/.dispatch-state.json" \
+    ".coordinatorSessionId" "sess-NEW" "no heartbeat -> reclaim proceeds normally"
+
+  cleanup_team_config "test-spec"; rm -rf "$tmpdir"
+  end_test "No lastHeartbeat -> reclaims normally (backward compat)"
+}
+
 test_TBC2_no_coordinator_session_id() {
   begin_test "T-BC2"
   local tmpdir; tmpdir=$(setup_git_project)
@@ -640,6 +896,15 @@ test_TSH3_counter_reset_new_dispatch
 test_TSH4_json_output_validity
 test_TSH5_heartbeat_write_on_block
 test_TSH6_heartbeat_gated_reclaim
+echo ""
+
+echo "--- Edge Case Tests ---"
+test_TSH7_counter_file_missing_corrupt
+test_TSH8_counter_survives_safety_valve
+test_TSH9_counter_cleanup_terminal_status
+test_TSH10_empty_session_id_counter
+test_TSH11_max_blocks_env_override
+test_TSH12_concurrent_invocations
 echo ""
 
 echo "--- Ported Tests (updated expectations) ---"
