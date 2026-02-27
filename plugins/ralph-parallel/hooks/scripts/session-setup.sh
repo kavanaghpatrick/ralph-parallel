@@ -10,6 +10,7 @@
 set -euo pipefail
 
 # Read hook input (must be first -- stdin is consumed once)
+# Error path: if jq fails, SESSION_ID="" = no session isolation (legacy behavior)
 INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null) || SESSION_ID=""
 
@@ -32,6 +33,8 @@ if [ -n "$GIT_COMMON_DIR" ] && [ -n "$GIT_DIR" ] && [ "$GIT_COMMON_DIR" != "$GIT
 fi
 
 # Look for active dispatch state in any spec
+# Error path: jq failures use `|| continue` to skip unreadable state files.
+# If all files are unreadable, DISPATCH_ACTIVE stays false = no coordination.
 DISPATCH_ACTIVE=false
 ACTIVE_SPEC=""
 for state_file in "$GIT_ROOT"/specs/*/.dispatch-state.json; do
@@ -70,6 +73,8 @@ fi
 
 if [ "$DISPATCH_ACTIVE" = true ]; then
   DISPATCH_FILE="$GIT_ROOT/specs/$ACTIVE_SPEC/.dispatch-state.json"
+  # Error path: all jq reads default to safe values (0, "unknown", "none").
+  # These are only used for informational echo output, so failures are cosmetic.
   TOTAL_GROUPS=$(jq '.groups | length' "$DISPATCH_FILE" 2>/dev/null) || TOTAL_GROUPS=0
   COMPLETED_GROUPS=$(jq '.completedGroups | length' "$DISPATCH_FILE" 2>/dev/null) || COMPLETED_GROUPS=0
   GROUP_NAMES=$(jq -r '[.groups[].name] | join(", ")' "$DISPATCH_FILE" 2>/dev/null) || GROUP_NAMES="unknown"
@@ -77,6 +82,8 @@ if [ "$DISPATCH_ACTIVE" = true ]; then
   STRATEGY=$(jq -r '.strategy // "file-ownership"' "$DISPATCH_FILE" 2>/dev/null) || STRATEGY="file-ownership"
 
   # Check if a team still exists
+  # Error path: if jq fails, MEMBER_COUNT=0 -> TEAM_EXISTS=false -> triggers
+  # stale marking (safe: prevents blocking loop when team state is unreadable)
   TEAM_CONFIG="$HOME/.claude/teams/${ACTIVE_SPEC}-parallel/config.json"
   TEAM_EXISTS=false
   if [ -f "$TEAM_CONFIG" ]; then
@@ -91,15 +98,48 @@ if [ "$DISPATCH_ACTIVE" = true ]; then
     COORD_SID=$(jq -r '.coordinatorSessionId // empty' "$DISPATCH_FILE" 2>/dev/null) || COORD_SID=""
 
     if [ -n "$COORD_SID" ] && [ "$COORD_SID" != "$SESSION_ID" ] && [ "$TEAM_EXISTS" = true ]; then
-      # Session changed (resume/restart) + team active = auto-reclaim
-      jq --arg sid "$SESSION_ID" '.coordinatorSessionId = $sid' "$DISPATCH_FILE" > "${DISPATCH_FILE}.tmp" \
-        && mv "${DISPATCH_FILE}.tmp" "$DISPATCH_FILE"
-      echo "ralph-parallel: Auto-reclaimed dispatch for '$ACTIVE_SPEC' (session changed)"
+      # Session mismatch + team active -- check heartbeat before reclaiming
+      HEARTBEAT=$(jq -r '.lastHeartbeat // empty' "$DISPATCH_FILE" 2>/dev/null) || HEARTBEAT=""
+      RECLAIM_THRESHOLD="${RALPH_RECLAIM_THRESHOLD_MINUTES:-10}"
+
+      SHOULD_RECLAIM=true
+      if [ -n "$HEARTBEAT" ]; then
+        # Compute heartbeat age in minutes (BSD date with GNU fallback)
+        # Error path: if both date formats fail, HEARTBEAT_EPOCH=0 (epoch).
+        # This makes AGE_MINUTES very large = "stale" = allow reclaim.
+        # This is the safe default: reclaiming a live dispatch is recoverable
+        # (coordinator re-stamps on next session), while failing to reclaim a
+        # dead dispatch would permanently trap the user.
+        HEARTBEAT_EPOCH=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$HEARTBEAT" "+%s" 2>/dev/null) \
+          || HEARTBEAT_EPOCH=$(date -d "$HEARTBEAT" "+%s" 2>/dev/null) \
+          || HEARTBEAT_EPOCH=0
+        NOW_EPOCH=$(date +%s 2>/dev/null) || NOW_EPOCH=0
+        AGE_MINUTES=$(( (NOW_EPOCH - HEARTBEAT_EPOCH) / 60 ))
+
+        if [ "$AGE_MINUTES" -lt "$RECLAIM_THRESHOLD" ] 2>/dev/null; then
+          SHOULD_RECLAIM=false
+          echo "ralph-parallel: Dispatch for '$ACTIVE_SPEC' owned by another active session (heartbeat ${AGE_MINUTES}m ago). Skipping auto-reclaim."
+        fi
+      fi
+      # If no heartbeat (legacy) or heartbeat stale: reclaim
+
+      if [ "$SHOULD_RECLAIM" = true ]; then
+        # Error path: if jq/mv fails, reclaim silently fails. Session continues
+        # without coordinator ownership — stop hook won't block for this session
+        # (coordinatorSessionId mismatch), which is safe (user can re-dispatch).
+        jq --arg sid "$SESSION_ID" '.coordinatorSessionId = $sid' "$DISPATCH_FILE" > "${DISPATCH_FILE}.tmp.$$" 2>/dev/null \
+          && mv "${DISPATCH_FILE}.tmp.$$" "$DISPATCH_FILE" 2>/dev/null \
+          && echo "ralph-parallel: Auto-reclaimed dispatch for '$ACTIVE_SPEC' (session changed)" \
+          || echo "ralph-parallel: Warning: failed to auto-reclaim dispatch for '$ACTIVE_SPEC'"
+      fi
     elif [ -z "$COORD_SID" ] && [ "$TEAM_EXISTS" = true ]; then
       # Legacy dispatch (no field) -- stamp current session
-      jq --arg sid "$SESSION_ID" '.coordinatorSessionId = $sid' "$DISPATCH_FILE" > "${DISPATCH_FILE}.tmp" \
-        && mv "${DISPATCH_FILE}.tmp" "$DISPATCH_FILE"
-      echo "ralph-parallel: Stamped session ID on legacy dispatch for '$ACTIVE_SPEC'"
+      # Error path: if write fails, dispatch stays without coordinatorSessionId.
+      # Stop hook treats this as ambiguous ownership = still blocks (safe).
+      jq --arg sid "$SESSION_ID" '.coordinatorSessionId = $sid' "$DISPATCH_FILE" > "${DISPATCH_FILE}.tmp.$$" 2>/dev/null \
+        && mv "${DISPATCH_FILE}.tmp.$$" "$DISPATCH_FILE" 2>/dev/null \
+        && echo "ralph-parallel: Stamped session ID on legacy dispatch for '$ACTIVE_SPEC'" \
+        || echo "ralph-parallel: Warning: failed to stamp session ID on dispatch for '$ACTIVE_SPEC'"
     fi
   fi
 
@@ -111,10 +151,14 @@ if [ "$DISPATCH_ACTIVE" = true ]; then
   if [ "$TEAM_EXISTS" = false ] && [ "$COMPLETED_GROUPS" -lt "$TOTAL_GROUPS" ]; then
     # Team is dead and work is incomplete — mark dispatch as stale so
     # the Stop hook doesn't trap the user in a blocking loop.
-    jq --arg reason "team_lost" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    # Error path: if stale marking fails, stop hook will still see "dispatched"
+    # status + no team = scan mode allows stop (TEAM_LOST + !TEAM_NAME = exit 0).
+    STALE_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) || STALE_TS="1970-01-01T00:00:00Z"
+    jq --arg reason "team_lost" --arg ts "$STALE_TS" \
       '.status = "stale" | .staleReason = $reason | .staleSince = $ts' \
-      "$DISPATCH_FILE" > "${DISPATCH_FILE}.tmp" \
-      && mv "${DISPATCH_FILE}.tmp" "$DISPATCH_FILE"
+      "$DISPATCH_FILE" > "${DISPATCH_FILE}.tmp.$$" 2>/dev/null \
+      && mv "${DISPATCH_FILE}.tmp.$$" "$DISPATCH_FILE" 2>/dev/null \
+      || true
     # Restore gc.auto since dispatch is no longer active
     CURRENT_GC=$(git config --get gc.auto 2>/dev/null || echo "default")
     if [ "$CURRENT_GC" = "0" ]; then

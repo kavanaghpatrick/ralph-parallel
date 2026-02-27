@@ -5,8 +5,11 @@
 # Usage: bash ralph-parallel/scripts/test_session_isolation.sh
 #
 # Outputs per-test PASS/FAIL lines for grep-based verification:
-#   T-1 PASS: Matching session blocked
+#   T-1 PASS: Matching session blocked (JSON)
 #   EC-2 PASS: Corrupted JSON exits gracefully
+#
+# NOTE: The stop hook uses JSON decision control (exit 0 + JSON stdout) for blocking.
+# Tests that previously asserted exit 2 now assert exit 0 + JSON decision=block on stdout.
 
 set -uo pipefail
 
@@ -76,9 +79,16 @@ cleanup_team_config() {
   rm -rf "$HOME/.claude/teams/${1}-parallel"
 }
 
+# Clean up block counter temp files to prevent cross-test contamination
+cleanup_block_counters() {
+  rm -f /tmp/ralph-stop-* 2>/dev/null || true
+}
+
 begin_test() {
   CURRENT_TEST="$1"
   TEST_PASS=true
+  # Clean block counters before each test
+  cleanup_block_counters
 }
 
 end_test() {
@@ -136,9 +146,27 @@ assert_true() {
   fi
 }
 
+# Assert that stdout contains a JSON block decision (exit 0 + decision=block)
+# Usage: assert_stdout_contains_json_block "$stdout" "description"
+assert_stdout_contains_json_block() {
+  local stdout="$1" desc="${2:-}"
+  local decision
+  decision=$(echo "$stdout" | jq -r '.decision // empty' 2>/dev/null) || decision=""
+  if [ "$decision" = "block" ]; then
+    PASSES=$((PASSES + 1))
+  else
+    echo "  ASSERT FAIL: stdout JSON decision='$decision', expected 'block' ${desc:+($desc)}" >&2
+    FAILURES=$((FAILURES + 1))
+    TEST_PASS=false
+  fi
+}
+
 # Run stop hook with clean env (no CLAUDE_CODE_* vars)
+# Must cd into the tmpdir so git rev-parse fails and falls back to CWD from stdin JSON.
+# Usage: echo '{"session_id":"...","cwd":"$tmpdir",...}' | run_stop_hook "$tmpdir"
 run_stop_hook() {
-  env -u CLAUDE_CODE_AGENT_NAME -u CLAUDE_CODE_TEAM_NAME bash "$STOP_HOOK"
+  local dir="${1:-/tmp}"
+  (cd "$dir" && env -u CLAUDE_CODE_AGENT_NAME -u CLAUDE_CODE_TEAM_NAME bash "$STOP_HOOK")
 }
 
 # Run session hook with clean env in given directory
@@ -156,13 +184,14 @@ test_T1_matching_session_blocked() {
   write_dispatch_state "$tmpdir" "sess-A" "dispatched"
   write_team_config "test-spec" 1
 
-  local exit_code=0
-  echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
-    | run_stop_hook > /dev/null 2>&1 || exit_code=$?
+  local exit_code=0 stdout
+  stdout=$(echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" 2>/dev/null) || exit_code=$?
 
-  assert_exit_code "$exit_code" 2 "matching session should be blocked"
+  assert_exit_code "$exit_code" 0 "matching session blocked via JSON (exit 0)"
+  assert_stdout_contains_json_block "$stdout" "stdout should contain JSON block decision"
   cleanup_team_config "test-spec"; rm -rf "$tmpdir"
-  end_test "Matching session blocked"
+  end_test "Matching session blocked (JSON)"
 }
 
 test_T2_mismatching_session_allowed() {
@@ -173,7 +202,7 @@ test_T2_mismatching_session_allowed() {
 
   local exit_code=0
   echo "{\"session_id\":\"sess-B\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
-    | run_stop_hook > /dev/null 2>&1 || exit_code=$?
+    | run_stop_hook "$tmpdir" > /dev/null 2>&1 || exit_code=$?
 
   assert_exit_code "$exit_code" 0 "different session should be allowed"
   cleanup_team_config "test-spec"; rm -rf "$tmpdir"
@@ -186,13 +215,14 @@ test_T3_legacy_no_coord_blocks() {
   write_dispatch_state "$tmpdir" "" "dispatched"
   write_team_config "test-spec" 1
 
-  local exit_code=0
-  echo "{\"session_id\":\"sess-B\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
-    | run_stop_hook > /dev/null 2>&1 || exit_code=$?
+  local exit_code=0 stdout
+  stdout=$(echo "{\"session_id\":\"sess-B\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" 2>/dev/null) || exit_code=$?
 
-  assert_exit_code "$exit_code" 2 "legacy dispatch should block any session"
+  assert_exit_code "$exit_code" 0 "legacy dispatch blocked via JSON (exit 0)"
+  assert_stdout_contains_json_block "$stdout" "stdout should contain JSON block decision"
   cleanup_team_config "test-spec"; rm -rf "$tmpdir"
-  end_test "Legacy dispatch blocks any session"
+  end_test "Legacy dispatch blocks any session (JSON)"
 }
 
 test_T4_non_active_dispatch_allows() {
@@ -202,7 +232,7 @@ test_T4_non_active_dispatch_allows() {
 
   local exit_code=0
   echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
-    | run_stop_hook > /dev/null 2>&1 || exit_code=$?
+    | run_stop_hook "$tmpdir" > /dev/null 2>&1 || exit_code=$?
 
   assert_exit_code "$exit_code" 0 "merged dispatch should allow stop"
   rm -rf "$tmpdir"
@@ -215,28 +245,32 @@ test_T5_empty_session_id_blocks() {
   write_dispatch_state "$tmpdir" "sess-A" "dispatched"
   write_team_config "test-spec" 1
 
-  local exit_code=0
-  echo "{\"session_id\":\"\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
-    | run_stop_hook > /dev/null 2>&1 || exit_code=$?
+  local exit_code=0 stdout
+  stdout=$(echo "{\"session_id\":\"\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" 2>/dev/null) || exit_code=$?
 
-  assert_exit_code "$exit_code" 2 "empty session_id should block"
+  assert_exit_code "$exit_code" 0 "empty session_id blocked via JSON (exit 0)"
+  assert_stdout_contains_json_block "$stdout" "stdout should contain JSON block decision"
   cleanup_team_config "test-spec"; rm -rf "$tmpdir"
-  end_test "Empty session_id blocks"
+  end_test "Empty session_id blocks (JSON)"
 }
 
-test_T13_stop_hook_active_allows() {
+test_T13_stop_hook_active_reblocks() {
   begin_test "T-13"
   local tmpdir; tmpdir=$(setup_project)
   write_dispatch_state "$tmpdir" "sess-A" "dispatched"
   write_team_config "test-spec" 1
 
-  local exit_code=0
-  echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":true,\"last_assistant_message\":\"\"}" \
-    | run_stop_hook > /dev/null 2>&1 || exit_code=$?
+  # New behavior: stop_hook_active=true re-checks state and blocks with JSON
+  # (up to MAX_BLOCKS safety valve). First invocation = block count 1.
+  local exit_code=0 stdout
+  stdout=$(echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":true,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" 2>/dev/null) || exit_code=$?
 
-  assert_exit_code "$exit_code" 0 "stop_hook_active=true should allow stop (prevent re-trigger loop)"
+  assert_exit_code "$exit_code" 0 "stop_hook_active=true blocks via JSON (exit 0)"
+  assert_stdout_contains_json_block "$stdout" "re-block should produce JSON block decision"
   cleanup_team_config "test-spec"; rm -rf "$tmpdir"
-  end_test "stop_hook_active=true allows stop"
+  end_test "stop_hook_active=true re-blocks (JSON)"
 }
 
 # --- Unit Tests: session-setup.sh (SessionStart Hook) ---
@@ -353,16 +387,17 @@ test_IT1_session_A_dispatches_B_stops() {
 
   local exit_b=0
   echo "{\"session_id\":\"sess-B\",\"cwd\":\"$tmpdir\"}" \
-    | run_stop_hook > /dev/null 2>&1 || exit_b=$?
+    | run_stop_hook "$tmpdir" > /dev/null 2>&1 || exit_b=$?
   assert_exit_code "$exit_b" 0 "session B allowed"
 
-  local exit_a=0
-  echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\"}" \
-    | run_stop_hook > /dev/null 2>&1 || exit_a=$?
-  assert_exit_code "$exit_a" 2 "session A blocked"
+  local exit_a=0 stdout_a
+  stdout_a=$(echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\"}" \
+    | run_stop_hook "$tmpdir" 2>/dev/null) || exit_a=$?
+  assert_exit_code "$exit_a" 0 "session A blocked via JSON (exit 0)"
+  assert_stdout_contains_json_block "$stdout_a" "session A should get JSON block"
 
   cleanup_team_config "test-spec"; rm -rf "$tmpdir"
-  end_test "Session A blocked, B allowed"
+  end_test "Session A blocked (JSON), B allowed"
 }
 
 test_IT2_resume_auto_reclaim() {
@@ -377,13 +412,14 @@ test_IT2_resume_auto_reclaim() {
   assert_json_field "$tmpdir/specs/test-spec/.dispatch-state.json" \
     ".coordinatorSessionId" "sess-NEW" "auto-reclaim should update coord"
 
-  local exit_code=0
-  echo "{\"session_id\":\"sess-NEW\",\"cwd\":\"$tmpdir\"}" \
-    | run_stop_hook > /dev/null 2>&1 || exit_code=$?
-  assert_exit_code "$exit_code" 2 "new coordinator blocked by Stop hook"
+  local exit_code=0 stdout
+  stdout=$(echo "{\"session_id\":\"sess-NEW\",\"cwd\":\"$tmpdir\"}" \
+    | run_stop_hook "$tmpdir" 2>/dev/null) || exit_code=$?
+  assert_exit_code "$exit_code" 0 "new coordinator blocked via JSON (exit 0)"
+  assert_stdout_contains_json_block "$stdout" "new coordinator should get JSON block"
 
   cleanup_team_config "test-spec"; rm -rf "$tmpdir"
-  end_test "Resume auto-reclaim flow"
+  end_test "Resume auto-reclaim flow (JSON)"
 }
 
 test_IT3_status_ownership() {
@@ -405,18 +441,20 @@ test_IT4_legacy_blocks_all() {
   write_dispatch_state "$tmpdir" "" "dispatched"
   write_team_config "test-spec" 1
 
-  local exit_a=0
-  echo "{\"session_id\":\"sess-X\",\"cwd\":\"$tmpdir\"}" \
-    | run_stop_hook > /dev/null 2>&1 || exit_a=$?
-  assert_exit_code "$exit_a" 2 "blocks session X"
+  local exit_a=0 stdout_a
+  stdout_a=$(echo "{\"session_id\":\"sess-X\",\"cwd\":\"$tmpdir\"}" \
+    | run_stop_hook "$tmpdir" 2>/dev/null) || exit_a=$?
+  assert_exit_code "$exit_a" 0 "blocks session X via JSON (exit 0)"
+  assert_stdout_contains_json_block "$stdout_a" "session X should get JSON block"
 
-  local exit_b=0
-  echo "{\"session_id\":\"sess-Y\",\"cwd\":\"$tmpdir\"}" \
-    | run_stop_hook > /dev/null 2>&1 || exit_b=$?
-  assert_exit_code "$exit_b" 2 "blocks session Y"
+  local exit_b=0 stdout_b
+  stdout_b=$(echo "{\"session_id\":\"sess-Y\",\"cwd\":\"$tmpdir\"}" \
+    | run_stop_hook "$tmpdir" 2>/dev/null) || exit_b=$?
+  assert_exit_code "$exit_b" 0 "blocks session Y via JSON (exit 0)"
+  assert_stdout_contains_json_block "$stdout_b" "session Y should get JSON block"
 
   cleanup_team_config "test-spec"; rm -rf "$tmpdir"
-  end_test "Legacy blocks all sessions"
+  end_test "Legacy blocks all sessions (JSON)"
 }
 
 test_IT5_reclaim_updates_coord() {
@@ -431,13 +469,14 @@ test_IT5_reclaim_updates_coord() {
   assert_json_field "$state_file" ".coordinatorSessionId" "sess-RECLAIMED" "reclaim updated"
 
   write_team_config "test-spec" 1
-  local exit_code=0
-  echo "{\"session_id\":\"sess-RECLAIMED\",\"cwd\":\"$tmpdir\"}" \
-    | run_stop_hook > /dev/null 2>&1 || exit_code=$?
-  assert_exit_code "$exit_code" 2 "reclaimed session blocked"
+  local exit_code=0 stdout
+  stdout=$(echo "{\"session_id\":\"sess-RECLAIMED\",\"cwd\":\"$tmpdir\"}" \
+    | run_stop_hook "$tmpdir" 2>/dev/null) || exit_code=$?
+  assert_exit_code "$exit_code" 0 "reclaimed session blocked via JSON (exit 0)"
+  assert_stdout_contains_json_block "$stdout" "reclaimed session should get JSON block"
 
   cleanup_team_config "test-spec"; rm -rf "$tmpdir"
-  end_test "Manual reclaim updates coord"
+  end_test "Manual reclaim updates coord (JSON)"
 }
 
 # --- Edge Case Tests ---
@@ -450,18 +489,19 @@ test_EC1_two_specs_different_coordinators() {
   write_team_config "spec-a" 1
   write_team_config "spec-b" 1
 
-  local exit_a=0
-  echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\"}" \
-    | run_stop_hook > /dev/null 2>&1 || exit_a=$?
-  assert_exit_code "$exit_a" 2 "session A blocked by spec-a"
+  local exit_a=0 stdout_a
+  stdout_a=$(echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\"}" \
+    | run_stop_hook "$tmpdir" 2>/dev/null) || exit_a=$?
+  assert_exit_code "$exit_a" 0 "session A blocked via JSON (exit 0)"
+  assert_stdout_contains_json_block "$stdout_a" "session A should get JSON block from spec-a"
 
   local exit_c=0
   echo "{\"session_id\":\"sess-C\",\"cwd\":\"$tmpdir\"}" \
-    | run_stop_hook > /dev/null 2>&1 || exit_c=$?
+    | run_stop_hook "$tmpdir" > /dev/null 2>&1 || exit_c=$?
   assert_exit_code "$exit_c" 0 "session C allowed"
 
   cleanup_team_config "spec-a"; cleanup_team_config "spec-b"; rm -rf "$tmpdir"
-  end_test "Two specs different coordinators"
+  end_test "Two specs different coordinators (JSON)"
 }
 
 test_EC2_corrupted_json() {
@@ -471,7 +511,7 @@ test_EC2_corrupted_json() {
 
   local exit_code=0
   echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\"}" \
-    | run_stop_hook > /dev/null 2>&1 || exit_code=$?
+    | run_stop_hook "$tmpdir" > /dev/null 2>&1 || exit_code=$?
 
   assert_exit_code "$exit_code" 0 "corrupted JSON should exit 0"
   rm -rf "$tmpdir"
@@ -515,7 +555,7 @@ test_EC5_stale_dispatch_no_team_allows() {
 
   local exit_code=0
   echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
-    | run_stop_hook > /dev/null 2>&1 || exit_code=$?
+    | run_stop_hook "$tmpdir" > /dev/null 2>&1 || exit_code=$?
 
   assert_exit_code "$exit_code" 0 "stale dispatch (no team) via scan should allow stop"
   rm -rf "$tmpdir"
@@ -529,13 +569,14 @@ test_EC6_legacy_dispatch_with_team_blocks() {
   write_dispatch_state "$tmpdir" "" "dispatched"
   write_team_config "test-spec" 1
 
-  local exit_code=0
-  echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
-    | run_stop_hook > /dev/null 2>&1 || exit_code=$?
+  local exit_code=0 stdout
+  stdout=$(echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" 2>/dev/null) || exit_code=$?
 
-  assert_exit_code "$exit_code" 2 "legacy dispatch with live team should block"
+  assert_exit_code "$exit_code" 0 "legacy dispatch with live team blocked via JSON (exit 0)"
+  assert_stdout_contains_json_block "$stdout" "legacy dispatch with team should get JSON block"
   cleanup_team_config "test-spec"; rm -rf "$tmpdir"
-  end_test "Legacy dispatch with team blocks"
+  end_test "Legacy dispatch with team blocks (JSON)"
 }
 
 test_EC7_concurrent_starts() {
@@ -567,7 +608,7 @@ test_T2_mismatching_session_allowed
 test_T3_legacy_no_coord_blocks
 test_T4_non_active_dispatch_allows
 test_T5_empty_session_id_blocks
-test_T13_stop_hook_active_allows
+test_T13_stop_hook_active_reblocks
 echo ""
 
 echo "--- SessionStart Hook Unit Tests ---"
