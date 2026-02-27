@@ -141,7 +141,7 @@ After POC validated, clean up and align the existing test suite.
   - **Commit**: `test(hooks): update session isolation tests for JSON decision control`
   - _Requirements: AC-6.1, AC-6.2_
 
-- [ ] 2.2 Add error handling hardening to dispatch-coordinator.sh
+- [x] 2.2 Add error handling hardening to dispatch-coordinator.sh
   - **Do**:
     1. Ensure `write_heartbeat` failures are non-fatal: wrap with `|| true` so a failed heartbeat write doesn't prevent blocking
     2. Ensure `write_block_counter` failures are non-fatal: wrap with `|| true`

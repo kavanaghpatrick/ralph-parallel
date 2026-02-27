@@ -16,27 +16,34 @@ set -euo pipefail
 # --- Helper functions ---
 
 # Output JSON block decision and exit (uses jq for safe escaping)
+# Error path: if jq fails, exits 0 with no output (allow stop rather than crash)
 block_stop() {
   local reason="$1"
-  jq -nc --arg r "$reason" '{"decision":"block","reason":$r}'
+  jq -nc --arg r "$reason" '{"decision":"block","reason":$r}' || true
   exit 0
 }
 
 # Output nothing (allow) and exit
+# Error path: none — exit 0 always succeeds
 allow_stop() {
   exit 0
 }
 
 # Cleanup block counter and allow stop
+# Error path: rm -f is already non-fatal; if delete fails, stale counter
+# is harmless (reset on next dispatch via status/dispatchedAt mismatch)
 cleanup_and_allow() {
   local counter_file="${1:-}"
   if [ -n "$counter_file" ] && [ -f "$counter_file" ]; then
-    rm -f "$counter_file"
+    rm -f "$counter_file" || true
   fi
   exit 0
 }
 
 # Read and validate block counter; returns "count" or "0" if reset needed
+# Error path: any read/parse failure returns "0" (treat as first block).
+# This means /tmp permission denied or corrupt file = block still works,
+# just without counter tracking (will never hit safety valve).
 read_block_counter() {
   local counter_file="$1"
   local current_status="$2"
@@ -64,24 +71,38 @@ read_block_counter() {
 }
 
 # Write block counter (non-fatal on failure)
+# Error path: if /tmp write fails (permission denied, disk full), || true
+# ensures blocking still works — just without counter tracking, so the
+# safety valve (MAX_BLOCKS) won't trigger and the hook blocks indefinitely
+# until dispatch reaches terminal status.
 write_block_counter() {
   local counter_file="$1"
   local count="$2"
   local current_status="$3"
   local dispatched_at="$4"
-  echo "${count}:${current_status}:${dispatched_at}" > "$counter_file" || true
+  echo "${count}:${current_status}:${dispatched_at}" > "$counter_file" 2>/dev/null || true
 }
 
 # Write heartbeat to dispatch state (atomic, non-fatal on failure)
+# Error path: if date/jq/mv fails, || true ensures blocking still works.
+# Missing heartbeat means session-setup will treat dispatch as "stale" and
+# allow reclaim — a safe default (reclaiming a live dispatch is recoverable;
+# failing to reclaim a dead dispatch would trap the user).
 write_heartbeat() {
   local state_file="$1"
   local ts
-  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  jq --arg ts "$ts" '.lastHeartbeat = $ts' "$state_file" > "${state_file}.tmp.$$" \
-    && mv "${state_file}.tmp.$$" "$state_file" || true
+  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) || ts=""
+  if [ -z "$ts" ]; then
+    return 0  # Skip heartbeat write if date fails; blocking still works
+  fi
+  jq --arg ts "$ts" '.lastHeartbeat = $ts' "$state_file" > "${state_file}.tmp.$$" 2>/dev/null \
+    && mv "${state_file}.tmp.$$" "$state_file" 2>/dev/null || true
 }
 
 # --- Parse stdin ---
+# Error path: if jq fails to parse stdin, all fields default to empty/false.
+# Empty CWD falls through to $(pwd) in PROJECT_ROOT. Empty SESSION_ID means
+# no session isolation (legacy behavior). false STOP_HOOK_ACTIVE = first block.
 
 INPUT=$(cat)
 CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null) || CWD=""
@@ -109,6 +130,8 @@ if [ -n "$TEAM_NAME" ]; then
   DISPATCH_STATE="$SPEC_DIR/.dispatch-state.json"
 else
   # No team context (session restart?) -- scan ALL active dispatches
+  # Error path: jq read failures in scan loop use `|| continue` (skip file)
+  # or `|| VAR=""` (treat as empty). Skipping = no block = allow stop (safe).
   DISPATCH_STATE=""
   SPEC_NAME=""
   FOUND_MY_DISPATCH=false
@@ -160,6 +183,9 @@ if [ ! -f "$DISPATCH_STATE" ]; then
   exit 0
 fi
 
+# Error path: if jq can't read status, exit 0 (allow stop — can't determine
+# dispatch state, so blocking would be unsafe). If dispatchedAt fails,
+# default to "unknown" which causes block counter mismatch = reset to 0.
 STATUS=$(jq -r '.status // "unknown"' "$DISPATCH_STATE" 2>/dev/null) || exit 0
 DISPATCHED_AT=$(jq -r '.dispatchedAt // "unknown"' "$DISPATCH_STATE" 2>/dev/null) || DISPATCHED_AT="unknown"
 
@@ -183,6 +209,8 @@ if [ -n "$TEAM_NAME" ] && [ -f "$DISPATCH_STATE" ]; then
 fi
 
 # --- Completion check ---
+# Error path: if groups can't be read, exit 0 (allow stop — can't determine
+# progress). If completedGroups fails, default 0 = "nothing done" = block.
 TOTAL_GROUPS=$(jq '.groups | length' "$DISPATCH_STATE" 2>/dev/null) || exit 0
 COMPLETED_GROUPS=$(jq '.completedGroups | length' "$DISPATCH_STATE" 2>/dev/null) || COMPLETED_GROUPS=0
 
@@ -201,14 +229,21 @@ if [ "$COMPLETED_GROUPS" -ge "$TOTAL_GROUPS" ] 2>/dev/null; then
 fi
 
 # --- Block counter check (applies to both first and re-block) ---
+# Error path: read_block_counter returns "0" on any failure (see function).
+# -ge comparison with 2>/dev/null handles non-numeric: defaults to "not >=",
+# meaning we proceed to block (safe — worst case is one extra block cycle).
 BLOCK_COUNT=$(read_block_counter "$COUNTER_FILE" "$STATUS" "$DISPATCHED_AT")
 
 if [ "$BLOCK_COUNT" -ge "$MAX_BLOCKS" ] 2>/dev/null; then
-  # Safety valve: allow stop after MAX_BLOCKS (do NOT delete counter)
+  # Safety valve: allow stop after MAX_BLOCKS (do NOT delete counter —
+  # prevents loop: reach MAX -> allow -> restart -> counter gone -> block again)
   exit 0
 fi
 
 # --- Team lost check ---
+# Error path: if team config can't be read or jq fails, MEMBER_COUNT=0
+# which means TEAM_LOST=true. This is safe: "teammates lost" reason tells
+# the coordinator to re-dispatch, which is the correct recovery action.
 TEAM_CONFIG="$HOME/.claude/teams/${SPEC_NAME}-parallel/config.json"
 TEAM_LOST=false
 if [ ! -f "$TEAM_CONFIG" ]; then
@@ -226,11 +261,14 @@ if [ "$TEAM_LOST" = true ] && [ -z "$TEAM_NAME" ]; then
 fi
 
 # --- Write heartbeat (active dispatch, about to block) ---
-write_heartbeat "$DISPATCH_STATE"
+# Non-fatal: failed heartbeat = session-setup treats as stale (safe default)
+write_heartbeat "$DISPATCH_STATE" || true
 
 # --- Increment block counter ---
+# Non-fatal: failed counter write = safety valve won't trigger (blocks forever
+# until terminal status, which is safe — just less user-friendly)
 NEW_COUNT=$((BLOCK_COUNT + 1))
-write_block_counter "$COUNTER_FILE" "$NEW_COUNT" "$STATUS" "$DISPATCHED_AT"
+write_block_counter "$COUNTER_FILE" "$NEW_COUNT" "$STATUS" "$DISPATCHED_AT" || true
 
 # --- Build and emit JSON block ---
 if [ "$TEAM_LOST" = true ]; then
