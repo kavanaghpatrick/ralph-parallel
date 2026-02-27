@@ -60,13 +60,13 @@ Focus: Replace exit-2 blocking with JSON decision control in dispatch-coordinato
   - _Requirements: FR-6, FR-7_
   - _Design: Component 4_
 
-- [ ] 1.3 [VERIFY] Quality checkpoint: syntax validation
+- [x] 1.3 [VERIFY] Quality checkpoint: syntax validation
   - **Do**: Run bash syntax check on both modified scripts
   - **Verify**: `bash -n ralph-parallel/hooks/scripts/dispatch-coordinator.sh && bash -n ralph-parallel/hooks/scripts/session-setup.sh && echo "PASS"`
   - **Done when**: Both scripts pass bash syntax validation
   - **Commit**: `chore(hooks): pass syntax validation` (only if fixes needed)
 
-- [ ] 1.4 Create test_stop_hook.sh test suite
+- [x] 1.4 Create test_stop_hook.sh test suite
   - **Do**:
     1. Create `ralph-parallel/scripts/test_stop_hook.sh` following the pattern of `test_session_isolation.sh`
     2. Include the same helper functions: `setup_project()`, `write_dispatch_state()`, `write_team_config()`, `cleanup_team_config()`, `begin_test()`, `end_test()`, `assert_exit_code()`, `assert_json_field()`, `assert_true()`
