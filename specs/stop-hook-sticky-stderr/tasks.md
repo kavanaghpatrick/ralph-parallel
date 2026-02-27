@@ -156,7 +156,7 @@ After POC validated, clean up and align the existing test suite.
   - _Requirements: AC-5.3_
   - _Design: Error Handling table_
 
-- [ ] 2.3 [VERIFY] Quality checkpoint: full test suite
+- [x] 2.3 [VERIFY] Quality checkpoint: full test suite
   - **Do**: Run both test suites and syntax validation
   - **Verify**: `bash -n ralph-parallel/hooks/scripts/dispatch-coordinator.sh && bash -n ralph-parallel/hooks/scripts/session-setup.sh && bash ralph-parallel/scripts/test_stop_hook.sh 2>&1 | tail -1 | grep -q '0 failed' && bash ralph-parallel/scripts/test_session_isolation.sh 2>&1 | tail -1 | grep -q '0 failed' && echo "PASS: all checks green"`
   - **Done when**: Syntax clean, both test suites pass
@@ -164,7 +164,7 @@ After POC validated, clean up and align the existing test suite.
 
 ## Phase 3: Testing
 
-- [ ] 3.1 Add edge case tests for block counter behavior
+- [x] 3.1 Add edge case tests for block counter behavior
   - **Do**:
     1. Add tests to `test_stop_hook.sh`:
        - **T-SH7**: Block counter file missing/corrupt -> treated as count=0
@@ -179,7 +179,7 @@ After POC validated, clean up and align the existing test suite.
   - **Commit**: `test(hooks): add block counter edge case tests`
   - _Requirements: AC-2.3 through AC-2.7_
 
-- [ ] 3.2 Add edge case tests for heartbeat and reclaim behavior
+- [x] 3.2 Add edge case tests for heartbeat and reclaim behavior
   - **Do**:
     1. Add tests to `test_stop_hook.sh`:
        - **T-SH13**: Heartbeat write uses `.tmp.$$` pattern (check that no orphan `.tmp` files remain after write)
@@ -193,13 +193,13 @@ After POC validated, clean up and align the existing test suite.
   - **Commit**: `test(hooks): add heartbeat and reclaim edge case tests`
   - _Requirements: AC-4.1 through AC-4.6, AC-6.1 through AC-6.3_
 
-- [ ] 3.3 [VERIFY] Quality checkpoint: complete test coverage
+- [x] 3.3 [VERIFY] Quality checkpoint: complete test coverage
   - **Do**: Run all test suites
   - **Verify**: `bash ralph-parallel/scripts/test_stop_hook.sh 2>&1 | tail -1 | grep -q '0 failed' && bash ralph-parallel/scripts/test_session_isolation.sh 2>&1 | tail -1 | grep -q '0 failed' && echo "PASS: all tests green"`
   - **Done when**: All test suites pass
   - **Commit**: `chore(hooks): pass quality checkpoint` (only if fixes needed)
 
-- [ ] 3.4 Sync plugin to cache and validate
+- [x] 3.4 Sync plugin to cache and validate
   - **Do**:
     1. Sync modified plugin to cache: `rsync -av --delete ralph-parallel/ ~/.claude/plugins/cache/ralph-parallel-local/ralph-parallel/0.2.0/`
     2. Verify the symlink is intact: `ls -la ~/.claude/plugins/cache/ralph-parallel` (should point to `ralph-parallel-local`)
@@ -212,7 +212,7 @@ After POC validated, clean up and align the existing test suite.
 
 ## Phase 4: Quality Gates
 
-- [ ] 4.1 [VERIFY] Full local CI: syntax + all tests
+- [x] 4.1 [VERIFY] Full local CI: syntax + all tests
   - **Do**: Run complete validation suite
   - **Verify**: `bash -n ralph-parallel/hooks/scripts/dispatch-coordinator.sh && bash -n ralph-parallel/hooks/scripts/session-setup.sh && bash ralph-parallel/scripts/test_stop_hook.sh 2>&1 | tail -1 | grep -q '0 failed' && bash ralph-parallel/scripts/test_session_isolation.sh 2>&1 | tail -1 | grep -q '0 failed' && echo "PASS: all local CI green"`
   - **Done when**: All syntax checks pass, all test suites pass
