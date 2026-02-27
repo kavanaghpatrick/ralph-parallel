@@ -836,6 +836,265 @@ test_TSH12_concurrent_invocations() {
   end_test "Concurrent stop hook invocations don't crash"
 }
 
+# --- Test 13 (T-SH13): Heartbeat write uses .tmp.$$ pattern (no orphan .tmp files) ---
+
+test_TSH13_heartbeat_tmp_no_orphans() {
+  begin_test "T-SH13"
+  local tmpdir; tmpdir=$(setup_project)
+  write_dispatch_state "$tmpdir" "sess-A" "dispatched"
+  write_team_config "test-spec" 1
+
+  local state_file="$tmpdir/specs/test-spec/.dispatch-state.json"
+
+  # Trigger a block (which writes heartbeat)
+  echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" > /dev/null 2>&1 || true
+
+  # Check that no orphan .tmp files remain in the spec dir
+  local orphan_count
+  orphan_count=$(find "$tmpdir/specs/test-spec" -name "*.tmp.*" 2>/dev/null | wc -l | tr -d ' ')
+  assert_true "$([ "$orphan_count" = "0" ] && echo true || echo false)" "no orphan .tmp files after heartbeat write"
+
+  # Verify the heartbeat was actually written (not lost)
+  local has_heartbeat
+  has_heartbeat=$(jq 'has("lastHeartbeat")' "$state_file" 2>/dev/null) || has_heartbeat="false"
+  assert_true "$([ "$has_heartbeat" = "true" ] && echo true || echo false)" "heartbeat present after block"
+
+  # Trigger a second block to double-check no orphans accumulate
+  echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":true,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" > /dev/null 2>&1 || true
+
+  orphan_count=$(find "$tmpdir/specs/test-spec" -name "*.tmp.*" 2>/dev/null | wc -l | tr -d ' ')
+  assert_true "$([ "$orphan_count" = "0" ] && echo true || echo false)" "no orphan .tmp files after second heartbeat write"
+
+  cleanup_team_config "test-spec"; rm -rf "$tmpdir"
+  end_test "Heartbeat write uses .tmp.$$ pattern (no orphan .tmp files)"
+}
+
+# --- Test 14 (T-SH14): RALPH_RECLAIM_THRESHOLD_MINUTES env var overrides default 10 ---
+
+test_TSH14_reclaim_threshold_env_override() {
+  begin_test "T-SH14"
+  local tmpdir; tmpdir=$(setup_git_project)
+
+  # Create a dispatch with heartbeat 5 minutes ago
+  local ts_5min_ago
+  if date -j -f "%Y-%m-%dT%H:%M:%SZ" "2020-01-01T00:00:00Z" "+%s" > /dev/null 2>&1; then
+    ts_5min_ago=$(date -u -j -v-5M +%Y-%m-%dT%H:%M:%SZ)
+  else
+    ts_5min_ago=$(date -u -d "5 minutes ago" +%Y-%m-%dT%H:%M:%SZ)
+  fi
+  write_dispatch_state_with_heartbeat "$tmpdir" "sess-OLD" "dispatched" "test-spec" "$ts_5min_ago"
+  write_team_config "test-spec" 1
+
+  # Default threshold is 10 min, so 5-min-old heartbeat -> skip reclaim
+  echo "{\"session_id\":\"sess-NEW\",\"source\":\"resume\",\"cwd\":\"$tmpdir\"}" \
+    | run_session_hook "$tmpdir" > /dev/null 2>&1
+
+  assert_json_field "$tmpdir/specs/test-spec/.dispatch-state.json" \
+    ".coordinatorSessionId" "sess-OLD" "default threshold 10: 5min heartbeat -> no reclaim"
+
+  # Now override threshold to 3 minutes -- 5-min-old heartbeat should be stale
+  # Restore original dispatch state (reset coordinatorSessionId in case it was changed)
+  write_dispatch_state_with_heartbeat "$tmpdir" "sess-OLD" "dispatched" "test-spec" "$ts_5min_ago"
+
+  echo "{\"session_id\":\"sess-NEW2\",\"source\":\"resume\",\"cwd\":\"$tmpdir\"}" \
+    | (cd "$tmpdir" && env -u CLAUDE_CODE_AGENT_NAME -u CLAUDE_CODE_TEAM_NAME RALPH_RECLAIM_THRESHOLD_MINUTES=3 bash "$SESSION_HOOK") > /dev/null 2>&1
+
+  assert_json_field "$tmpdir/specs/test-spec/.dispatch-state.json" \
+    ".coordinatorSessionId" "sess-NEW2" "threshold=3: 5min heartbeat -> reclaim proceeds"
+
+  # Override threshold to 60 minutes -- 5-min-old heartbeat should be fresh
+  write_dispatch_state_with_heartbeat "$tmpdir" "sess-OLD2" "dispatched" "test-spec" "$ts_5min_ago"
+
+  echo "{\"session_id\":\"sess-NEW3\",\"source\":\"resume\",\"cwd\":\"$tmpdir\"}" \
+    | (cd "$tmpdir" && env -u CLAUDE_CODE_AGENT_NAME -u CLAUDE_CODE_TEAM_NAME RALPH_RECLAIM_THRESHOLD_MINUTES=60 bash "$SESSION_HOOK") > /dev/null 2>&1
+
+  assert_json_field "$tmpdir/specs/test-spec/.dispatch-state.json" \
+    ".coordinatorSessionId" "sess-OLD2" "threshold=60: 5min heartbeat -> no reclaim"
+
+  cleanup_team_config "test-spec"; rm -rf "$tmpdir"
+  end_test "RALPH_RECLAIM_THRESHOLD_MINUTES env var overrides default 10"
+}
+
+# --- Test 15 (T-SH15): Heartbeat written only on block, NOT on allow ---
+
+test_TSH15_heartbeat_only_on_block() {
+  begin_test "T-SH15"
+  local tmpdir; tmpdir=$(setup_project)
+  write_team_config "test-spec" 1
+
+  local state_file="$tmpdir/specs/test-spec/.dispatch-state.json"
+
+  # Scenario A: Terminal status (merged) -> allow stop, no heartbeat update
+  write_dispatch_state "$tmpdir" "sess-A" "merged"
+
+  # Record the initial state (no heartbeat)
+  local has_heartbeat_before
+  has_heartbeat_before=$(jq 'has("lastHeartbeat")' "$state_file" 2>/dev/null) || has_heartbeat_before="false"
+  assert_true "$([ "$has_heartbeat_before" = "false" ] && echo true || echo false)" "no heartbeat before allow (merged)"
+
+  # Trigger stop hook (should allow, not block, and NOT write heartbeat)
+  local stdout
+  stdout=$(cd "$tmpdir" && echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+    | env -u CLAUDE_CODE_AGENT_NAME CLAUDE_CODE_TEAM_NAME="test-spec-parallel" bash "$STOP_HOOK" 2>/dev/null) || true
+
+  # Verify no stdout (allow)
+  assert_true "$([ -z "$stdout" ] && echo true || echo false)" "terminal status produces allow (no stdout)"
+
+  # Verify no heartbeat was written
+  local has_heartbeat_after
+  has_heartbeat_after=$(jq 'has("lastHeartbeat")' "$state_file" 2>/dev/null) || has_heartbeat_after="false"
+  assert_true "$([ "$has_heartbeat_after" = "false" ] && echo true || echo false)" "no heartbeat after allow (merged)"
+
+  # Scenario B: Safety valve (exceed MAX_BLOCKS) -> allow, no heartbeat update
+  write_dispatch_state "$tmpdir" "sess-A" "dispatched"
+
+  # Block 3 times (reach MAX_BLOCKS=3) then check 4th (safety valve)
+  for i in 1 2 3; do
+    local active="false"
+    [ "$i" -gt 1 ] && active="true"
+    echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":$active,\"last_assistant_message\":\"\"}" \
+      | run_stop_hook "$tmpdir" > /dev/null 2>&1 || true
+  done
+
+  # Record heartbeat timestamp after the 3rd block
+  local hb_before_valve
+  hb_before_valve=$(jq -r '.lastHeartbeat // "none"' "$state_file" 2>/dev/null) || hb_before_valve="none"
+
+  # Small delay to ensure any new heartbeat would have a different timestamp
+  sleep 1
+
+  # 4th attempt: safety valve (allow)
+  stdout=$(echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":true,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" 2>/dev/null) || true
+  assert_true "$([ -z "$stdout" ] && echo true || echo false)" "safety valve produces allow (no stdout)"
+
+  # Heartbeat should NOT have been updated during safety valve allow
+  local hb_after_valve
+  hb_after_valve=$(jq -r '.lastHeartbeat // "none"' "$state_file" 2>/dev/null) || hb_after_valve="none"
+  assert_true "$([ "$hb_before_valve" = "$hb_after_valve" ] && echo true || echo false)" "heartbeat unchanged after safety valve allow"
+
+  cleanup_team_config "test-spec"; rm -rf "$tmpdir"
+  end_test "Heartbeat written only on block, NOT on allow"
+}
+
+# --- Test 16 (T-SH16): Concurrent sessions: heartbeat < 10min -> B skips reclaim ---
+
+test_TSH16_concurrent_sessions_skip_reclaim() {
+  begin_test "T-SH16"
+  local tmpdir; tmpdir=$(setup_git_project)
+
+  # Session A dispatches and blocks (creating fresh heartbeat)
+  write_dispatch_state "$tmpdir" "sess-A" "dispatched"
+  write_team_config "test-spec" 1
+
+  # Trigger stop hook as session A to write a fresh heartbeat
+  echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" > /dev/null 2>&1 || true
+
+  # Verify heartbeat was written by session A
+  local state_file="$tmpdir/specs/test-spec/.dispatch-state.json"
+  local has_heartbeat
+  has_heartbeat=$(jq 'has("lastHeartbeat")' "$state_file" 2>/dev/null) || has_heartbeat="false"
+  assert_true "$([ "$has_heartbeat" = "true" ] && echo true || echo false)" "session A wrote heartbeat"
+
+  # Session B starts (different session_id) -- should NOT reclaim because heartbeat is fresh
+  echo "{\"session_id\":\"sess-B\",\"source\":\"resume\",\"cwd\":\"$tmpdir\"}" \
+    | run_session_hook "$tmpdir" > /dev/null 2>&1
+
+  # coordinatorSessionId should still be sess-A (no reclaim)
+  assert_json_field "$state_file" \
+    ".coordinatorSessionId" "sess-A" "session B skips reclaim (heartbeat fresh)"
+
+  # Session B's stop hook should NOT block (session mismatch in scan mode)
+  local stdout exit_code
+  stdout=$(echo "{\"session_id\":\"sess-B\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" 2>/dev/null) || true
+  exit_code=$?
+  assert_exit_code "$exit_code" 0 "session B stop hook exits 0"
+  assert_true "$([ -z "$stdout" ] && echo true || echo false)" "session B stop hook allows (session mismatch)"
+
+  cleanup_team_config "test-spec"; rm -rf "$tmpdir"
+  end_test "Concurrent sessions: heartbeat < 10min -> B skips reclaim"
+}
+
+# --- Test 17 (T-SH17): Legacy dispatch (no lastHeartbeat, no coordinatorSessionId) ---
+
+test_TSH17_legacy_dispatch_both_hooks() {
+  begin_test "T-SH17"
+  local tmpdir; tmpdir=$(setup_git_project)
+
+  # Create a legacy dispatch state: no coordinatorSessionId, no lastHeartbeat
+  mkdir -p "$tmpdir/specs/test-spec"
+  cat > "$tmpdir/specs/test-spec/.dispatch-state.json" <<JSON
+{
+  "status": "dispatched",
+  "groups": [{"name": "g1"}, {"name": "g2"}],
+  "completedGroups": ["g1"]
+}
+JSON
+  write_team_config "test-spec" 1
+
+  local state_file="$tmpdir/specs/test-spec/.dispatch-state.json"
+
+  # Verify no coordinatorSessionId and no lastHeartbeat
+  local has_coord has_hb
+  has_coord=$(jq 'has("coordinatorSessionId")' "$state_file" 2>/dev/null) || has_coord="true"
+  has_hb=$(jq 'has("lastHeartbeat")' "$state_file" 2>/dev/null) || has_hb="true"
+  assert_true "$([ "$has_coord" = "false" ] && echo true || echo false)" "legacy: no coordinatorSessionId"
+  assert_true "$([ "$has_hb" = "false" ] && echo true || echo false)" "legacy: no lastHeartbeat"
+
+  # Session-setup hook: should stamp coordinatorSessionId (legacy stamp path)
+  echo "{\"session_id\":\"sess-LEGACY\",\"source\":\"startup\",\"cwd\":\"$tmpdir\"}" \
+    | run_session_hook "$tmpdir" > /dev/null 2>&1
+
+  assert_json_field "$state_file" \
+    ".coordinatorSessionId" "sess-LEGACY" "session-setup stamps legacy dispatch"
+
+  # Stop hook: should block (active dispatch with team alive)
+  # Reset to pure legacy state for stop hook test
+  cat > "$state_file" <<JSON
+{
+  "status": "dispatched",
+  "groups": [{"name": "g1"}, {"name": "g2"}],
+  "completedGroups": ["g1"]
+}
+JSON
+
+  local stdout exit_code
+  stdout=$(echo "{\"session_id\":\"sess-LEGACY\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" 2>/dev/null) || true
+  exit_code=$?
+
+  assert_exit_code "$exit_code" 0 "legacy stop hook exits 0"
+  assert_stdout_json "$stdout" "block" "test-spec" "legacy dispatch blocks with JSON"
+  # Reason should show correct progress (1/2 groups done)
+  local reason
+  reason=$(echo "$stdout" | jq -r '.reason' 2>/dev/null) || reason=""
+  assert_true "$(echo "$reason" | grep -q '1/2' && echo true || echo false)" "legacy reason shows 1/2 groups done"
+
+  # Now test reclaim path: new session reclaims legacy dispatch (no heartbeat = stale)
+  # Re-create legacy state with the stamped coord from a previous session
+  cat > "$state_file" <<JSON
+{
+  "coordinatorSessionId": "sess-OLD-LEGACY",
+  "status": "dispatched",
+  "groups": [{"name": "g1"}, {"name": "g2"}],
+  "completedGroups": ["g1"]
+}
+JSON
+
+  echo "{\"session_id\":\"sess-NEW-LEGACY\",\"source\":\"resume\",\"cwd\":\"$tmpdir\"}" \
+    | run_session_hook "$tmpdir" > /dev/null 2>&1
+
+  assert_json_field "$state_file" \
+    ".coordinatorSessionId" "sess-NEW-LEGACY" "legacy dispatch (no heartbeat) reclaimed by new session"
+
+  cleanup_team_config "test-spec"; rm -rf "$tmpdir"
+  end_test "Legacy dispatch (no lastHeartbeat, no coordinatorSessionId) -> both hooks work"
+}
+
 # --- Backward Compat Tests ---
 
 test_TBC1_no_heartbeat_reclaims_normally() {
@@ -898,13 +1157,21 @@ test_TSH5_heartbeat_write_on_block
 test_TSH6_heartbeat_gated_reclaim
 echo ""
 
-echo "--- Edge Case Tests ---"
+echo "--- Edge Case Tests (Block Counter) ---"
 test_TSH7_counter_file_missing_corrupt
 test_TSH8_counter_survives_safety_valve
 test_TSH9_counter_cleanup_terminal_status
 test_TSH10_empty_session_id_counter
 test_TSH11_max_blocks_env_override
 test_TSH12_concurrent_invocations
+echo ""
+
+echo "--- Edge Case Tests (Heartbeat & Reclaim) ---"
+test_TSH13_heartbeat_tmp_no_orphans
+test_TSH14_reclaim_threshold_env_override
+test_TSH15_heartbeat_only_on_block
+test_TSH16_concurrent_sessions_skip_reclaim
+test_TSH17_legacy_dispatch_both_hooks
 echo ""
 
 echo "--- Ported Tests (updated expectations) ---"
