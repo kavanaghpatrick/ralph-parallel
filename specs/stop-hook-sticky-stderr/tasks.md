@@ -95,7 +95,7 @@ Focus: Replace exit-2 blocking with JSON decision control in dispatch-coordinato
   - _Requirements: AC-1.1 through AC-1.6, AC-2.1 through AC-2.7, AC-3.1 through AC-3.6, AC-4.1 through AC-4.6, AC-6.1 through AC-6.4_
   - _Design: Test Strategy_
 
-- [ ] 1.5 POC Checkpoint: run test suite end-to-end
+- [x] 1.5 POC Checkpoint: run test suite end-to-end
   - **Do**:
     1. Run the new test suite: `bash ralph-parallel/scripts/test_stop_hook.sh`
     2. If tests fail, fix issues in dispatch-coordinator.sh or session-setup.sh
@@ -120,7 +120,7 @@ Focus: Replace exit-2 blocking with JSON decision control in dispatch-coordinato
 
 After POC validated, clean up and align the existing test suite.
 
-- [ ] 2.1 Update test_session_isolation.sh for new exit code behavior
+- [x] 2.1 Update test_session_isolation.sh for new exit code behavior
   - **Do**:
     1. Read `ralph-parallel/scripts/test_session_isolation.sh`
     2. Update tests that assert `exit 2` to assert `exit 0` (the new behavior for JSON blocking):
