@@ -9,6 +9,18 @@
 
 set -euo pipefail
 
+# Auto-sync plugin source to cache so new sessions always get latest code
+# CLAUDE_PLUGIN_ROOT = plugin root (e.g. ~/.claude/plugins/cache/.../0.2.0/)
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+  DEV_SRC="$(git rev-parse --show-toplevel 2>/dev/null)/ralph-parallel"
+  CACHE_DIR="$(cd "$CLAUDE_PLUGIN_ROOT" 2>/dev/null && pwd -P)" || CACHE_DIR=""
+  DEV_DIR="$(cd "$DEV_SRC" 2>/dev/null && pwd -P)" || DEV_DIR=""
+  # Only sync if dev source exists and differs from cache (avoids self-sync)
+  if [ -d "${DEV_SRC:-}" ] && [ -n "$CACHE_DIR" ] && [ "$CACHE_DIR" != "$DEV_DIR" ]; then
+    rsync -a --delete "$DEV_SRC/" "$CACHE_DIR/" 2>/dev/null || true
+  fi
+fi
+
 # Read hook input (must be first -- stdin is consumed once)
 # Error path: if jq fails, SESSION_ID="" = no session isolation (legacy behavior)
 INPUT=$(cat)
