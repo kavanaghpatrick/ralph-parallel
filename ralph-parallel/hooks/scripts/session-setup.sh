@@ -91,14 +91,35 @@ if [ "$DISPATCH_ACTIVE" = true ]; then
     COORD_SID=$(jq -r '.coordinatorSessionId // empty' "$DISPATCH_FILE" 2>/dev/null) || COORD_SID=""
 
     if [ -n "$COORD_SID" ] && [ "$COORD_SID" != "$SESSION_ID" ] && [ "$TEAM_EXISTS" = true ]; then
-      # Session changed (resume/restart) + team active = auto-reclaim
-      jq --arg sid "$SESSION_ID" '.coordinatorSessionId = $sid' "$DISPATCH_FILE" > "${DISPATCH_FILE}.tmp" \
-        && mv "${DISPATCH_FILE}.tmp" "$DISPATCH_FILE"
-      echo "ralph-parallel: Auto-reclaimed dispatch for '$ACTIVE_SPEC' (session changed)"
+      # Session mismatch + team active -- check heartbeat before reclaiming
+      HEARTBEAT=$(jq -r '.lastHeartbeat // empty' "$DISPATCH_FILE" 2>/dev/null) || HEARTBEAT=""
+      RECLAIM_THRESHOLD="${RALPH_RECLAIM_THRESHOLD_MINUTES:-10}"
+
+      SHOULD_RECLAIM=true
+      if [ -n "$HEARTBEAT" ]; then
+        # Compute heartbeat age in minutes (BSD date with GNU fallback, epoch 0 on failure)
+        HEARTBEAT_EPOCH=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$HEARTBEAT" "+%s" 2>/dev/null) \
+          || HEARTBEAT_EPOCH=$(date -d "$HEARTBEAT" "+%s" 2>/dev/null) \
+          || HEARTBEAT_EPOCH=0
+        NOW_EPOCH=$(date +%s)
+        AGE_MINUTES=$(( (NOW_EPOCH - HEARTBEAT_EPOCH) / 60 ))
+
+        if [ "$AGE_MINUTES" -lt "$RECLAIM_THRESHOLD" ] 2>/dev/null; then
+          SHOULD_RECLAIM=false
+          echo "ralph-parallel: Dispatch for '$ACTIVE_SPEC' owned by another active session (heartbeat ${AGE_MINUTES}m ago). Skipping auto-reclaim."
+        fi
+      fi
+      # If no heartbeat (legacy) or heartbeat stale: reclaim
+
+      if [ "$SHOULD_RECLAIM" = true ]; then
+        jq --arg sid "$SESSION_ID" '.coordinatorSessionId = $sid' "$DISPATCH_FILE" > "${DISPATCH_FILE}.tmp.$$" \
+          && mv "${DISPATCH_FILE}.tmp.$$" "$DISPATCH_FILE"
+        echo "ralph-parallel: Auto-reclaimed dispatch for '$ACTIVE_SPEC' (session changed)"
+      fi
     elif [ -z "$COORD_SID" ] && [ "$TEAM_EXISTS" = true ]; then
       # Legacy dispatch (no field) -- stamp current session
-      jq --arg sid "$SESSION_ID" '.coordinatorSessionId = $sid' "$DISPATCH_FILE" > "${DISPATCH_FILE}.tmp" \
-        && mv "${DISPATCH_FILE}.tmp" "$DISPATCH_FILE"
+      jq --arg sid "$SESSION_ID" '.coordinatorSessionId = $sid' "$DISPATCH_FILE" > "${DISPATCH_FILE}.tmp.$$" \
+        && mv "${DISPATCH_FILE}.tmp.$$" "$DISPATCH_FILE"
       echo "ralph-parallel: Stamped session ID on legacy dispatch for '$ACTIVE_SPEC'"
     fi
   fi
@@ -113,8 +134,8 @@ if [ "$DISPATCH_ACTIVE" = true ]; then
     # the Stop hook doesn't trap the user in a blocking loop.
     jq --arg reason "team_lost" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       '.status = "stale" | .staleReason = $reason | .staleSince = $ts' \
-      "$DISPATCH_FILE" > "${DISPATCH_FILE}.tmp" \
-      && mv "${DISPATCH_FILE}.tmp" "$DISPATCH_FILE"
+      "$DISPATCH_FILE" > "${DISPATCH_FILE}.tmp.$$" \
+      && mv "${DISPATCH_FILE}.tmp.$$" "$DISPATCH_FILE"
     # Restore gc.auto since dispatch is no longer active
     CURRENT_GC=$(git config --get gc.auto 2>/dev/null || echo "default")
     if [ "$CURRENT_GC" = "0" ]; then
