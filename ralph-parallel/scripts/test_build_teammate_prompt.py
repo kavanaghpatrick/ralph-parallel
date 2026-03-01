@@ -126,3 +126,76 @@ class TestQualityCommandsCLI:
         assert result.returncode == 0
         assert "Quality Checks" in result.stdout
         assert "echo ok" in result.stdout
+
+
+# --- KB Context Tests ---
+
+_KB_JSON_FULL = json.dumps({
+    "kb_available": True,
+    "total_findings": 2,
+    "skill_contexts": [{
+        "skill_name": "motor-design",
+        "finding_count": 2,
+        "confidence_summary": {"high": 1, "verified": 1},
+        "findings": [
+            {"confidence": "high", "topic": "cogging", "claim": "Skewing reduces cogging",
+             "evidence": "Measured on prototype", "source_title": "IEEE Handbook"},
+            {"confidence": "verified", "topic": "magnets", "claim": "NdFeB optimal for BLDC",
+             "evidence": "Cost-performance analysis"},
+        ],
+    }],
+})
+
+_KB_JSON_UNAVAILABLE = json.dumps({"kb_available": False, "total_findings": 0, "skill_contexts": []})
+
+
+class TestKBContext:
+    def test_kb_section_appears_first(self):
+        """KB section must render BEFORE 'Your Tasks' in the prompt."""
+        group = _make_group()
+        prompt = build_prompt(group, "test-spec", "/tmp", ["#1"],
+                              kb_context_json=_KB_JSON_FULL)
+        kb_pos = prompt.index("# Knowledge Base Context")
+        tasks_pos = prompt.index("Your Tasks")
+        assert kb_pos < tasks_pos, "KB section must appear before Your Tasks"
+
+    def test_skill_contexts_render_with_findings_and_confidence(self):
+        """Skill name, findings, and confidence summary should all be present."""
+        group = _make_group()
+        prompt = build_prompt(group, "test-spec", "/tmp", ["#1"],
+                              kb_context_json=_KB_JSON_FULL)
+        assert "motor-design" in prompt
+        assert "Skewing reduces cogging" in prompt
+        assert "NdFeB optimal for BLDC" in prompt
+        assert "1 high" in prompt
+        assert "1 verified" in prompt
+        assert "IEEE Handbook" in prompt
+
+    def test_kb_unavailable_shows_notice(self):
+        """kb_available=false should produce a 'not available' notice, not crash."""
+        group = _make_group()
+        prompt = build_prompt(group, "test-spec", "/tmp", ["#1"],
+                              kb_context_json=_KB_JSON_UNAVAILABLE)
+        assert "# Knowledge Base Context" in prompt
+        assert "not available" in prompt
+        # Should NOT contain skill findings
+        assert "motor-design" not in prompt
+
+    def test_invalid_json_shows_parse_error(self):
+        """Invalid JSON for kb_context should produce a parse-error notice, not crash."""
+        group = _make_group()
+        prompt = build_prompt(group, "test-spec", "/tmp", ["#1"],
+                              kb_context_json="NOT VALID JSON {{{")
+        assert "# Knowledge Base Context" in prompt
+        assert "could not be parsed" in prompt
+        # Prompt should still contain normal sections
+        assert "Your Tasks" in prompt
+
+    def test_no_kb_context_produces_original_prompt(self):
+        """When kb_context_json is None, prompt should be unchanged (no KB section)."""
+        group = _make_group()
+        prompt_without = build_prompt(group, "test-spec", "/tmp", ["#1"])
+        prompt_none = build_prompt(group, "test-spec", "/tmp", ["#1"],
+                                   kb_context_json=None)
+        assert prompt_without == prompt_none
+        assert "Knowledge Base Context" not in prompt_none
