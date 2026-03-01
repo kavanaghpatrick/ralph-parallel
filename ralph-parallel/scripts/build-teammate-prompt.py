@@ -56,11 +56,80 @@ def build_quality_section(quality_commands: dict, baseline_test_count: int = 0) 
     return lines
 
 
+def _render_kb_context(kb_data: dict) -> str:
+    """Render KB context dict into prompt section.
+
+    Accepts the serialized format from parallel_adapter._serialize_kb_context().
+    Format mirrors AgentKnowledgeContext.to_prompt_section() output.
+    """
+    lines = ['# Knowledge Base Context']
+
+    total = kb_data.get('total_findings', 0)
+    skills = kb_data.get('skill_contexts', [])
+
+    if not kb_data.get('kb_available', True):
+        lines.append('')
+        lines.append('The knowledge base is not available for this mission. '
+                     'Research topics from first principles and document findings thoroughly.')
+        return '\n'.join(lines)
+
+    lines.append(f'\nYou have access to {total} curated findings '
+                 f'across {len(skills)} skill domain(s). '
+                 f'These are real findings from prior research — '
+                 f'treat them as your starting knowledge.')
+
+    for sc in skills:
+        name = sc.get('skill_name', 'unknown')
+        count = sc.get('finding_count', 0)
+        lines.append(f'\n## {name} ({count} findings)')
+
+        # Confidence summary
+        conf = sc.get('confidence_summary', {})
+        conf_parts = []
+        for level in ('verified', 'high', 'medium', 'low'):
+            c = conf.get(level, 0)
+            if c > 0:
+                conf_parts.append(f'{c} {level}')
+        if conf_parts:
+            lines.append(f'Confidence: {", ".join(conf_parts)}')
+
+        # Findings
+        for f in sc.get('findings', []):
+            source = f' (source: {f["source_title"]})' if f.get('source_title') else ''
+            lines.append(f'\n### [{f.get("confidence", "medium")}] '
+                        f'{f.get("topic", "")}: {f.get("claim", "")}{source}')
+            if f.get('evidence'):
+                evidence = f['evidence'][:300]
+                lines.append(f'  Evidence: {evidence}')
+
+    # KB instructions
+    lines.append('\n## KB Instructions')
+    lines.append('- Use `em-kb search "<query>"` to find additional findings')
+    lines.append('- Use `em-kb detail <id>` for full finding text')
+
+    return '\n'.join(lines)
+
+
 def build_prompt(group: dict, spec_name: str, project_root: str, task_ids: list[str],
                  quality_commands: dict = None, baseline_test_count: int = 0,
-                 strategy: str = 'file-ownership') -> str:
+                 strategy: str = 'file-ownership',
+                 kb_context_json: str = None) -> str:
     """Build the complete teammate prompt for a group."""
     lines = []
+
+    # KB CONTEXT FIRST (matches fleet's prompt ordering)
+    if kb_context_json:
+        try:
+            kb_data = json.loads(kb_context_json)
+            kb_section = _render_kb_context(kb_data)
+            if kb_section:
+                lines.append(kb_section)
+                lines.append('')
+        except (json.JSONDecodeError, KeyError):
+            lines.append('# Knowledge Base Context')
+            lines.append('')
+            lines.append('KB context could not be parsed. Proceed without prior knowledge.')
+            lines.append('')
 
     name = group['name']
     tasks = group.get('taskDetails', [])
@@ -194,6 +263,8 @@ def main():
     parser.add_argument('--baseline-test-count', type=int, default=0, help='Baseline test count from dispatch snapshot')
     parser.add_argument('--strategy', default='file-ownership', choices=['file-ownership', 'worktree'],
                         help='Isolation strategy (default: file-ownership)')
+    parser.add_argument('--kb-context', default=None,
+                        help='JSON-serialized KB context (AgentKnowledgeContext format)')
     args = parser.parse_args()
 
     # Read partition JSON
@@ -220,7 +291,8 @@ def main():
     prompt = build_prompt(group, args.spec_name, args.project_root, task_ids,
                           quality_commands=quality_commands,
                           baseline_test_count=args.baseline_test_count,
-                          strategy=args.strategy)
+                          strategy=args.strategy,
+                          kb_context_json=args.kb_context)
     print(prompt)
 
 
