@@ -7,6 +7,7 @@
 # Uses JSON decision control: {"decision":"block","reason":"..."} on stdout + exit 0
 # Block counter with MAX_BLOCKS safety valve prevents infinite loops.
 # Heartbeat timestamp enables cross-session safety.
+# coordinatorSessionId: null (explicitly released) is distinct from missing (legacy).
 #
 # Input (JSON on stdin):
 #   stop_hook_active, last_assistant_message, session_id, cwd
@@ -144,6 +145,14 @@ else
     COORD_SID=$(jq -r '.coordinatorSessionId // empty' "$state_file" 2>/dev/null) || COORD_SID=""
     SCAN_SPEC=$(basename "$(dirname "$state_file")")
 
+    # Explicitly released (coordinatorSessionId: null) — skip, don't block
+    if [ -z "$COORD_SID" ]; then
+      COORD_IS_NULL=$(jq 'has("coordinatorSessionId") and .coordinatorSessionId == null' "$state_file" 2>/dev/null) || COORD_IS_NULL="false"
+      if [ "$COORD_IS_NULL" = "true" ]; then
+        continue
+      fi
+    fi
+
     # In scan mode, only match dispatches we can positively identify as
     # belonging to this session via coordinatorSessionId.
     if [ -n "$COORD_SID" ] && [ -n "$SESSION_ID" ] && [ "$COORD_SID" = "$SESSION_ID" ]; then
@@ -192,14 +201,25 @@ DISPATCHED_AT=$(jq -r '.dispatchedAt // "unknown"' "$DISPATCH_STATE" 2>/dev/null
 # --- Block counter file path ---
 COUNTER_FILE="/tmp/ralph-stop-${SPEC_NAME}-${SESSION_ID}"
 
-# --- Terminal status check: any status other than "dispatched" ---
-if [ "$STATUS" != "dispatched" ]; then
+# --- Terminal status check ---
+# "merged" falls through to completion check (prevents bypass).
+# Other terminal statuses (aborted, superseded, stale) allow immediate stop.
+if [ "$STATUS" != "dispatched" ] && [ "$STATUS" != "merged" ]; then
   cleanup_and_allow "$COUNTER_FILE"
 fi
 
 # --- Session isolation (team-name branch) ---
 if [ -n "$TEAM_NAME" ] && [ -f "$DISPATCH_STATE" ]; then
   COORD_SID=$(jq -r '.coordinatorSessionId // empty' "$DISPATCH_STATE" 2>/dev/null) || COORD_SID=""
+
+  # Explicitly released (coordinatorSessionId: null) — allow stop
+  if [ -z "$COORD_SID" ]; then
+    COORD_IS_NULL=$(jq 'has("coordinatorSessionId") and .coordinatorSessionId == null' "$DISPATCH_STATE" 2>/dev/null) || COORD_IS_NULL="false"
+    if [ "$COORD_IS_NULL" = "true" ]; then
+      cleanup_and_allow "$COUNTER_FILE"
+    fi
+  fi
+
   if [ -n "$COORD_SID" ] && [ -n "$SESSION_ID" ]; then
     if [ "$COORD_SID" != "$SESSION_ID" ]; then
       exit 0
