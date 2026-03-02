@@ -257,7 +257,7 @@ Focus: Verify gates work together. Extend stop hook tests for merged+incomplete 
 
 Focus: Harden edge cases, improve error messages, ensure backward compatibility.
 
-- [ ] 3.1 Add edge case handling to validate-pre-merge.py
+- [x] 3.1 Add edge case handling to validate-pre-merge.py
   - **Do**:
     1. Handle malformed JSON in dispatch-state: try/except JSONDecodeError -> exit 1 with error JSON
     2. Handle subprocess timeout (300s) for quality commands -> exit 1 with timeout message
