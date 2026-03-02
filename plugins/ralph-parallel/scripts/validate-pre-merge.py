@@ -38,16 +38,20 @@ def _resolve_project_root(dispatch_state_path):
 
 
 def _run_command(cmd, cwd, timeout=300):
-    """Run a shell command and return exit code."""
+    """Run a shell command and return (exit_code, timed_out).
+
+    Returns exit code and whether the command timed out.
+    Timeout defaults to 300s (5 minutes).
+    """
     try:
         result = subprocess.run(
             cmd, shell=True, cwd=cwd,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             timeout=timeout
         )
-        return result.returncode
+        return result.returncode, False
     except subprocess.TimeoutExpired:
-        return -1
+        return -1, True
 
 
 def main():
@@ -118,14 +122,18 @@ def main():
         for slot in ['build', 'test', 'lint']:
             cmd = quality.get(slot)
             if cmd and cmd not in ('', 'null', None):
-                exit_code = _run_command(cmd, project_root)
+                exit_code, timed_out = _run_command(cmd, project_root)
                 passed = exit_code == 0
-                checks[f'quality{slot.capitalize()}'] = {
+                check_result = {
                     'passed': passed,
                     'command': cmd,
                     'exitCode': exit_code,
                     'skipped': False,
                 }
+                if timed_out:
+                    check_result['timeout'] = True
+                    check_result['message'] = f'Command timed out after 300s: {cmd}'
+                checks[f'quality{slot.capitalize()}'] = check_result
                 if not passed:
                     all_passed = False
             else:

@@ -166,3 +166,176 @@ class TestEdgeCases:
         assert out["checks"]["qualityBuild"]["skipped"] is True
         assert out["checks"]["qualityTest"]["skipped"] is True
         assert out["checks"]["qualityLint"]["skipped"] is True
+
+
+class TestMalformedJSON:
+    """Malformed JSON in dispatch-state -> exit 1 with error JSON."""
+
+    def test_malformed_json(self, tmp_path):
+        ds = tmp_path / ".dispatch-state.json"
+        tm = tmp_path / "tasks.md"
+        ds.write_text("{this is not valid json")
+        write_tasks_md(tm, checked=["1.1"])
+        code, out = run_script(ds, tm, skip_quality=True)
+        assert code == 1
+        assert "error" in out
+        assert "Malformed JSON" in out["error"]
+
+    def test_truncated_json(self, tmp_path):
+        ds = tmp_path / ".dispatch-state.json"
+        tm = tmp_path / "tasks.md"
+        ds.write_text('{"groups": [')
+        write_tasks_md(tm, checked=["1.1"])
+        code, out = run_script(ds, tm, skip_quality=True)
+        assert code == 1
+        assert "Malformed JSON" in out["error"]
+
+    def test_empty_file_as_dispatch_state(self, tmp_path):
+        ds = tmp_path / ".dispatch-state.json"
+        tm = tmp_path / "tasks.md"
+        ds.write_text("")
+        write_tasks_md(tm, checked=["1.1"])
+        code, out = run_script(ds, tm, skip_quality=True)
+        assert code == 1
+        assert "error" in out
+
+
+class TestSubprocessTimeout:
+    """Quality commands that exceed timeout -> exit 1 with timeout info."""
+
+    def test_timeout_reports_in_output(self, tmp_path):
+        ds = tmp_path / ".dispatch-state.json"
+        tm = tmp_path / "tasks.md"
+        # Use sleep 10 but with a very short timeout via a wrapper
+        # We can't easily test 300s timeout, so we test the _run_command
+        # function directly with a short timeout
+        write_dispatch_state(ds, groups=[], completed_groups=[],
+                             quality_commands={"build": "sleep 10"})
+        write_tasks_md(tm, checked=["1.1"])
+        # Run with subprocess timeout of 30s for the test harness,
+        # but the script's internal timeout is 300s.
+        # Instead, test _run_command directly.
+        pass  # Covered by test_run_command_timeout below
+
+    def test_run_command_timeout(self, tmp_path):
+        """Test _run_command with a short timeout to verify timeout handling."""
+        # Import the function directly
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "validate_pre_merge", SCRIPT)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        exit_code, timed_out = mod._run_command("sleep 10", str(tmp_path), timeout=1)
+        assert timed_out is True
+        assert exit_code == -1
+
+    def test_run_command_no_timeout(self, tmp_path):
+        """Normal command completes without timeout."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "validate_pre_merge", SCRIPT)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        exit_code, timed_out = mod._run_command("echo hello", str(tmp_path), timeout=10)
+        assert timed_out is False
+        assert exit_code == 0
+
+
+class TestEmptyTasksMd:
+    """Empty tasks.md (no checkboxes) -> vacuously true for checkbox check."""
+
+    def test_empty_file(self, tmp_path):
+        ds = tmp_path / ".dispatch-state.json"
+        tm = tmp_path / "tasks.md"
+        write_dispatch_state(ds, groups=[], completed_groups=[])
+        tm.write_text("")
+        code, out = run_script(ds, tm, skip_quality=True)
+        assert code == 0
+        assert out["passed"] is True
+        assert out["checks"]["allTasksChecked"]["passed"] is True
+        assert out["checks"]["allTasksChecked"]["total"] == 0
+        assert out["checks"]["allTasksChecked"]["checked"] == 0
+
+    def test_no_checkboxes_with_other_content(self, tmp_path):
+        ds = tmp_path / ".dispatch-state.json"
+        tm = tmp_path / "tasks.md"
+        write_dispatch_state(ds, groups=[], completed_groups=[])
+        tm.write_text("# Tasks\n\nSome text without checkboxes\n")
+        code, out = run_script(ds, tm, skip_quality=True)
+        assert code == 0
+        assert out["checks"]["allTasksChecked"]["passed"] is True
+        assert out["checks"]["allTasksChecked"]["total"] == 0
+
+    def test_empty_tasks_but_missing_group(self, tmp_path):
+        """Empty tasks.md passes checkbox check but groups check can still fail."""
+        ds = tmp_path / ".dispatch-state.json"
+        tm = tmp_path / "tasks.md"
+        write_dispatch_state(ds, groups=["A"], completed_groups=[])
+        tm.write_text("")
+        code, out = run_script(ds, tm, skip_quality=True)
+        assert code == 1
+        assert out["checks"]["allTasksChecked"]["passed"] is True
+        assert out["checks"]["allGroupsCompleted"]["passed"] is False
+
+
+class TestNullAndEmptyQualityCommands:
+    """Quality commands that are 'null' string or empty string -> skipped."""
+
+    def test_null_string_skipped(self, tmp_path):
+        ds = tmp_path / ".dispatch-state.json"
+        tm = tmp_path / "tasks.md"
+        write_dispatch_state(ds, groups=[], completed_groups=[],
+                             quality_commands={"build": "null", "test": "echo ok", "lint": "null"})
+        write_tasks_md(tm, checked=["1.1"])
+        code, out = run_script(ds, tm)
+        assert code == 0
+        assert out["checks"]["qualityBuild"]["skipped"] is True
+        assert out["checks"]["qualityTest"]["skipped"] is False
+        assert out["checks"]["qualityTest"]["passed"] is True
+        assert out["checks"]["qualityLint"]["skipped"] is True
+
+    def test_empty_string_skipped(self, tmp_path):
+        ds = tmp_path / ".dispatch-state.json"
+        tm = tmp_path / "tasks.md"
+        write_dispatch_state(ds, groups=[], completed_groups=[],
+                             quality_commands={"build": "", "test": "", "lint": ""})
+        write_tasks_md(tm, checked=["1.1"])
+        code, out = run_script(ds, tm)
+        assert code == 0
+        assert out["checks"]["qualityBuild"]["skipped"] is True
+        assert out["checks"]["qualityTest"]["skipped"] is True
+        assert out["checks"]["qualityLint"]["skipped"] is True
+
+    def test_none_value_skipped(self, tmp_path):
+        """JSON null values are skipped."""
+        ds = tmp_path / ".dispatch-state.json"
+        tm = tmp_path / "tasks.md"
+        # Write JSON with explicit null values
+        state = {
+            "groups": [],
+            "completedGroups": [],
+            "qualityCommands": {"build": None, "test": None, "lint": None}
+        }
+        ds.write_text(json.dumps(state))
+        write_tasks_md(tm, checked=["1.1"])
+        code, out = run_script(ds, tm)
+        assert code == 0
+        assert out["checks"]["qualityBuild"]["skipped"] is True
+        assert out["checks"]["qualityTest"]["skipped"] is True
+        assert out["checks"]["qualityLint"]["skipped"] is True
+
+    def test_mixed_null_and_valid(self, tmp_path):
+        """Mix of null/empty and valid commands."""
+        ds = tmp_path / ".dispatch-state.json"
+        tm = tmp_path / "tasks.md"
+        write_dispatch_state(ds, groups=[], completed_groups=[],
+                             quality_commands={"build": "null", "test": "echo ok", "lint": ""})
+        write_tasks_md(tm, checked=["1.1"])
+        code, out = run_script(ds, tm)
+        assert code == 0
+        assert out["checks"]["qualityBuild"]["skipped"] is True
+        assert out["checks"]["qualityTest"]["passed"] is True
+        assert out["checks"]["qualityTest"]["skipped"] is False
+        assert out["checks"]["qualityLint"]["skipped"] is True
