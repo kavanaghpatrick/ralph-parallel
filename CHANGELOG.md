@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.2] - 2026-03-02
+
+### Added
+- `--kb-context` flag in `build-teammate-prompt.py` for injecting knowledge base context into teammate prompts
+- Auto-sync plugin source to cache on SessionStart (no manual rsync needed during development)
+- Heartbeat-based reclaim safety: active coordinators write heartbeat timestamps, preventing premature reclaim by new sessions
+- Configurable reclaim threshold via `RALPH_RECLAIM_THRESHOLD_MINUTES` env var (default: 10)
+- 5 new tests for KB context injection and heartbeat/reclaim edge cases (62 total)
+
+### Fixed
+- Stop hook rewritten with JSON decision control (`{"decision":"block","reason":"..."}`) replacing exit-2 stderr pattern for reliable blocking
+- Block counter with `MAX_BLOCKS` safety valve prevents infinite stop-hook loops (default: 3, configurable via `RALPH_MAX_STOP_BLOCKS`)
+- Session-setup distinguishes explicitly released coordinators (`coordinatorSessionId: null`) from missing/legacy state
+- Error paths hardened across all hooks with safe defaults and detailed inline comments
+- Stale dispatch marking in session-setup restores `gc.auto` immediately
+
 ## [0.2.1] - 2026-02-26
 
 ### Fixed

@@ -1095,6 +1095,98 @@ JSON
   end_test "Legacy dispatch (no lastHeartbeat, no coordinatorSessionId) -> both hooks work"
 }
 
+# --- Test 18 (T-SH18): Null coordinatorSessionId allows stop (scan mode) ---
+
+test_TSH18_null_coordinator_allows_scan() {
+  begin_test "T-SH18"
+  local tmpdir; tmpdir=$(setup_project)
+  write_dispatch_state "$tmpdir" "null" "dispatched"
+  write_team_config "test-spec" 1
+
+  # In scan mode (no TEAM_NAME), null coordinatorSessionId = explicitly released
+  local stdout exit_code
+  stdout=$(echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" 2>/dev/null) || true
+  exit_code=$?
+
+  assert_exit_code "$exit_code" 0 "null coordinator exits 0"
+  assert_true "$([ -z "$stdout" ] && echo true || echo false)" "null coordinator allows stop (no JSON block)"
+
+  cleanup_team_config "test-spec"; rm -rf "$tmpdir"
+  end_test "Null coordinatorSessionId allows stop (scan mode)"
+}
+
+# --- Test 19 (T-SH19): Null coordinatorSessionId allows stop (team-name mode) ---
+
+test_TSH19_null_coordinator_allows_team() {
+  begin_test "T-SH19"
+  local tmpdir; tmpdir=$(setup_project)
+  write_dispatch_state "$tmpdir" "null" "dispatched"
+  write_team_config "test-spec" 1
+
+  # With TEAM_NAME context, null coordinatorSessionId = explicitly released
+  local stdout exit_code
+  stdout=$(cd "$tmpdir" && echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+    | env -u CLAUDE_CODE_AGENT_NAME CLAUDE_CODE_TEAM_NAME="test-spec-parallel" bash "$STOP_HOOK" 2>/dev/null) || true
+  exit_code=$?
+
+  assert_exit_code "$exit_code" 0 "null coordinator exits 0 (team mode)"
+  assert_true "$([ -z "$stdout" ] && echo true || echo false)" "null coordinator allows stop (no JSON block)"
+
+  cleanup_team_config "test-spec"; rm -rf "$tmpdir"
+  end_test "Null coordinatorSessionId allows stop (team-name mode)"
+}
+
+# --- Test 20 (T-SH20): Session-setup does not re-claim null coordinator ---
+
+test_TSH20_null_coordinator_not_reclaimed() {
+  begin_test "T-SH20"
+  local tmpdir; tmpdir=$(setup_git_project)
+  write_dispatch_state "$tmpdir" "null" "dispatched"
+  write_team_config "test-spec" 1
+
+  echo "{\"session_id\":\"sess-NEW\",\"source\":\"startup\",\"cwd\":\"$tmpdir\"}" \
+    | run_session_hook "$tmpdir" > /dev/null 2>&1
+
+  # coordinatorSessionId should remain null (not overwritten with sess-NEW)
+  local coord_is_null
+  coord_is_null=$(jq 'has("coordinatorSessionId") and .coordinatorSessionId == null' "$tmpdir/specs/test-spec/.dispatch-state.json" 2>/dev/null) || coord_is_null="false"
+  assert_true "$coord_is_null" "null coordinatorSessionId not re-claimed"
+
+  cleanup_team_config "test-spec"; rm -rf "$tmpdir"
+  end_test "Null coordinatorSessionId not re-claimed by session-setup"
+}
+
+# --- Test 21 (T-SH21): Missing field still blocks (legacy backward compat after null fix) ---
+
+test_TSH21_missing_field_still_blocks() {
+  begin_test "T-SH21"
+  local tmpdir; tmpdir=$(setup_project)
+
+  # Create dispatch WITHOUT coordinatorSessionId field (legacy)
+  mkdir -p "$tmpdir/specs/test-spec"
+  cat > "$tmpdir/specs/test-spec/.dispatch-state.json" <<JSON
+{
+  "status": "dispatched",
+  "groups": [{"name": "g1"}],
+  "completedGroups": []
+}
+JSON
+  write_team_config "test-spec" 1
+
+  # Scan mode: missing field + team alive should still block (legacy behavior preserved)
+  local stdout exit_code
+  stdout=$(echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" 2>/dev/null) || true
+  exit_code=$?
+
+  assert_exit_code "$exit_code" 0 "missing field exits 0"
+  assert_stdout_json "$stdout" "block" "" "missing field still blocks (legacy behavior preserved)"
+
+  cleanup_team_config "test-spec"; rm -rf "$tmpdir"
+  end_test "Missing coordinatorSessionId still blocks (legacy preserved)"
+}
+
 # --- Backward Compat Tests ---
 
 test_TBC1_no_heartbeat_reclaims_normally() {
@@ -1172,6 +1264,13 @@ test_TSH14_reclaim_threshold_env_override
 test_TSH15_heartbeat_only_on_block
 test_TSH16_concurrent_sessions_skip_reclaim
 test_TSH17_legacy_dispatch_both_hooks
+echo ""
+
+echo "--- Null vs Missing coordinatorSessionId Tests ---"
+test_TSH18_null_coordinator_allows_scan
+test_TSH19_null_coordinator_allows_team
+test_TSH20_null_coordinator_not_reclaimed
+test_TSH21_missing_field_still_blocks
 echo ""
 
 echo "--- Ported Tests (updated expectations) ---"

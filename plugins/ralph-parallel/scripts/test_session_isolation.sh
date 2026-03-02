@@ -597,6 +597,27 @@ test_EC7_concurrent_starts() {
   end_test "Concurrent starts last writer wins"
 }
 
+test_EC8_null_coordinator_allows_stop() {
+  begin_test "EC-8"
+  local tmpdir; tmpdir=$(setup_project)
+  write_dispatch_state "$tmpdir" "null" "dispatched"
+  write_team_config "test-spec" 1
+
+  # Null coordinatorSessionId = explicitly released, should allow stop
+  local exit_code=0 stdout
+  stdout=$(echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" 2>/dev/null) || exit_code=$?
+
+  assert_exit_code "$exit_code" 0 "null coordinator exits 0"
+  # Should NOT contain a JSON block decision (allow, not block)
+  local decision
+  decision=$(echo "$stdout" | jq -r '.decision // empty' 2>/dev/null) || decision=""
+  assert_true "$([ "$decision" != "block" ] && echo true || echo false)" "null coordinator should not block"
+
+  cleanup_team_config "test-spec"; rm -rf "$tmpdir"
+  end_test "Null coordinatorSessionId allows stop"
+}
+
 # --- Run All Tests ---
 
 echo "=== Session Isolation Test Suite ==="
@@ -637,6 +658,7 @@ test_EC4_team_config_zero_members
 test_EC5_stale_dispatch_no_team_allows
 test_EC6_legacy_dispatch_with_team_blocks
 test_EC7_concurrent_starts
+test_EC8_null_coordinator_allows_stop
 echo ""
 
 # --- Summary ---
