@@ -88,7 +88,8 @@ if [ "$TEST_EXIT" -ne 0 ]; then
   echo "ralph-parallel: Test command failed (exit $TEST_EXIT) — baseline will be -1" >&2
   echo "ralph-parallel: Last 20 lines of output:" >&2
   echo "$TEST_OUTPUT" | tail -20 >&2
-  RESULT=$(jq -n --argjson exit_code "$TEST_EXIT" '{testCount: -1, exitCode: $exit_code, reason: "tests_failing"}')
+  echo "ralph-parallel: WARNING: hardFail=true -- task-completed-gate.sh will still run tests per-task" >&2
+  RESULT=$(jq -n --argjson exit_code "$TEST_EXIT" '{testCount: -1, exitCode: $exit_code, reason: "tests_failing", hardFail: true}')
   echo "$RESULT"
   # Update dispatch-state.json
   TMPFILE=$(mktemp "${DISPATCH_STATE}.XXXXXX")
