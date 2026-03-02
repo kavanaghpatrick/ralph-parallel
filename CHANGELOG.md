@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.3] - 2026-03-02
+
+### Added
+- `validate-pre-merge.py` pre-merge gate script with 5 checks (checkboxes, groups, build/test/lint quality commands)
+- `merge-guard.sh` PreToolUse hook blocking unsafe `status="merged"` writes when tasks are incomplete
+- VERIFY task phase gate in `task-completed-gate.sh` (Stage 1.5): detects `[VERIFY]` marker, enforces all preceding tasks complete, runs full quality commands
+- `hardFail` baseline comparison in `task-completed-gate.sh` (Stage 5): distinguishes pre-existing failures from new regressions
+- `--strict` mode in `mark-tasks-complete.py`: skips unchecked tasks instead of force-marking them
+- `hardFail: true` flag in `capture-baseline.sh` when tests fail at dispatch time
+- 13 new edge case tests for validate-pre-merge.py (malformed JSON, subprocess timeout, empty tasks, null quality commands)
+- 3 new stop hook test scenarios (merged+incomplete, merged+complete, aborted unchanged)
+- 4 new strict mode tests for mark-tasks-complete.py
+
+### Fixed
+- Stop hook (`dispatch-coordinator.sh`) now checks completion for `status="merged"` instead of allowing immediately — prevents coordinator from bypassing quality gates
+- Scan mode includes `status="merged"` dispatches (prevents silent bypass in session restart scenarios)
+
 ## [0.2.2] - 2026-03-02
 
 ### Added
