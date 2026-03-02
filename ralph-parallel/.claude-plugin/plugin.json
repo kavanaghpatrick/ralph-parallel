@@ -1,10 +1,12 @@
 {
   "name": "ralph-parallel",
-  "version": "0.2.0",
+  "version": "0.2.3",
   "description": "Parallel spec execution via Claude Code Agent Teams. Analyzes tasks from ralph-specum specs, partitions them into parallelizable groups, and dispatches them to Agent Teams teammates for simultaneous execution.",
   "author": {
     "name": "patrickkavanagh"
   },
   "license": "MIT",
+  "homepage": "https://github.com/kavanaghpatrick/ralph-parallel",
+  "repository": "https://github.com/kavanaghpatrick/ralph-parallel",
   "keywords": ["ralph", "parallel", "agent-teams", "dispatch", "coordination", "worktree"]
 }
