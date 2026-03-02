@@ -35,7 +35,7 @@ Focus: Get all 6 gates functional end-to-end. Skip edge cases initially, accept 
   - _Requirements: FR-1, FR-2, AC-1.1 through AC-1.9_
   - _Design: Component 1_
 
-- [ ] 1.2 Create test_validate_pre_merge.py with 10 test cases
+- [x] 1.2 Create test_validate_pre_merge.py with 10 test cases
   - **Do**:
     1. Create `ralph-parallel/scripts/test_validate_pre_merge.py`
     2. Follow existing pattern from `test_mark_tasks_complete.py`: subprocess.run against script, JSON output parsing, tmp_path fixtures
@@ -62,7 +62,7 @@ Focus: Get all 6 gates functional end-to-end. Skip edge cases initially, accept 
 
 **Files owned**: `ralph-parallel/hooks/scripts/task-completed-gate.sh`
 
-- [ ] 1.3 Add Stage 1.5 VERIFY task phase gate to task-completed-gate.sh
+- [x] 1.3 Add Stage 1.5 VERIFY task phase gate to task-completed-gate.sh
   - **Do**:
     1. Insert new Stage 1.5 block after line 121 (after Stage 1 exit 2 block), before Stage 2
     2. Detect `[VERIFY]` marker: scan tasks.md for line matching `- [.] ${COMPLETED_SPEC_TASK}` AND containing `[VERIFY]`
@@ -81,7 +81,7 @@ Focus: Get all 6 gates functional end-to-end. Skip edge cases initially, accept 
   - _Requirements: FR-10, FR-11, AC-5.1 through AC-5.5_
   - _Design: Component 4a_
 
-- [ ] 1.4 Restructure Stage 5 for hardFail baseline comparison
+- [x] 1.4 Restructure Stage 5 for hardFail baseline comparison
   - **Do**:
     1. Read `BASELINE_HARD_FAIL` and `BASELINE_EXIT_CODE` from dispatch-state.json BEFORE the test execution block (after TEST_CMD is read, around line 225)
     2. Add null guards: `if [ "$BASELINE_HARD_FAIL" = "null" ]; then BASELINE_HARD_FAIL="false"; fi`
@@ -98,7 +98,7 @@ Focus: Get all 6 gates functional end-to-end. Skip edge cases initially, accept 
   - _Requirements: FR-5, FR-6, FR-7, AC-3.2 through AC-3.5_
   - _Design: Component 4b_
 
-- [ ] 1.5 [VERIFY] Quality checkpoint: `bash -n ralph-parallel/hooks/scripts/task-completed-gate.sh && bash -n ralph-parallel/hooks/scripts/dispatch-coordinator.sh`
+- [x] 1.5 [VERIFY] Quality checkpoint: `bash -n ralph-parallel/hooks/scripts/task-completed-gate.sh && bash -n ralph-parallel/hooks/scripts/dispatch-coordinator.sh`
   - **Do**: Verify bash syntax on all modified shell scripts
   - **Verify**: `bash -n ralph-parallel/hooks/scripts/task-completed-gate.sh && bash -n ralph-parallel/hooks/scripts/dispatch-coordinator.sh && bash -n ralph-parallel/scripts/capture-baseline.sh`
   - **Done when**: All shell scripts pass syntax check
@@ -122,7 +122,7 @@ Focus: Get all 6 gates functional end-to-end. Skip edge cases initially, accept 
   - _Requirements: FR-3, FR-4, AC-2.1 through AC-2.4_
   - _Design: Component 2_
 
-- [ ] 1.7 Create merge-guard.sh PreToolUse hook
+- [x] 1.7 Create merge-guard.sh PreToolUse hook
   - **Do**:
     1. Create `ralph-parallel/hooks/scripts/merge-guard.sh`
     2. Make executable: `chmod +x`
@@ -141,7 +141,7 @@ Focus: Get all 6 gates functional end-to-end. Skip edge cases initially, accept 
   - _Requirements: FR-8, FR-9, AC-4.1 through AC-4.6_
   - _Design: Component 5_
 
-- [ ] 1.8 Register merge-guard.sh in hooks.json
+- [x] 1.8 Register merge-guard.sh in hooks.json
   - **Do**:
     1. Modify `ralph-parallel/hooks/hooks.json`
     2. Add merge-guard.sh as second entry in the PreToolUse hooks array (after file-ownership-guard.sh)
@@ -158,7 +158,7 @@ Focus: Get all 6 gates functional end-to-end. Skip edge cases initially, accept 
 
 **Files owned**: `ralph-parallel/scripts/mark-tasks-complete.py`, `ralph-parallel/scripts/capture-baseline.sh`, `ralph-parallel/scripts/test_mark_tasks_complete.py`
 
-- [ ] 1.9 Add hardFail flag to capture-baseline.sh
+- [x] 1.9 Add hardFail flag to capture-baseline.sh
   - **Do**:
     1. Modify the test failure block (lines 87-97) in capture-baseline.sh
     2. Add `hardFail: true` to the jq JSON construction: change from `'{testCount: -1, exitCode: $exit_code, reason: "tests_failing"}'` to `'{testCount: -1, exitCode: $exit_code, reason: "tests_failing", hardFail: true}'`
@@ -170,7 +170,7 @@ Focus: Get all 6 gates functional end-to-end. Skip edge cases initially, accept 
   - _Requirements: AC-3.1, AC-3.6_
   - _Design: Component 3_
 
-- [ ] 1.10 Add --strict mode to mark-tasks-complete.py
+- [x] 1.10 Add --strict mode to mark-tasks-complete.py
   - **Do**:
     1. Add `--strict` argument to argparse (after `--dry-run`)
     2. Add `skipped = []` tracking list
@@ -188,7 +188,7 @@ Focus: Get all 6 gates functional end-to-end. Skip edge cases initially, accept 
   - _Requirements: FR-12, FR-13, AC-6.1 through AC-6.6_
   - _Design: Component 6_
 
-- [ ] 1.11 Add strict mode tests to test_mark_tasks_complete.py
+- [x] 1.11 Add strict mode tests to test_mark_tasks_complete.py
   - **Do**:
     1. Extend `ralph-parallel/scripts/test_mark_tasks_complete.py`
     2. Update `run_script` helper to accept `strict=False` parameter
@@ -204,7 +204,7 @@ Focus: Get all 6 gates functional end-to-end. Skip edge cases initially, accept 
   - _Requirements: AC-7.2_
   - _Design: Test Strategy - test_mark_tasks_complete.py_
 
-- [ ] 1.12 [VERIFY] Quality checkpoint: `pytest ralph-parallel/scripts/test_validate_pre_merge.py ralph-parallel/scripts/test_mark_tasks_complete.py -v`
+- [x] 1.12 [VERIFY] Quality checkpoint: `pytest ralph-parallel/scripts/test_validate_pre_merge.py ralph-parallel/scripts/test_mark_tasks_complete.py -v`
   - **Do**: Run Python test suite for all modified/new scripts
   - **Verify**: `pytest ralph-parallel/scripts/test_validate_pre_merge.py ralph-parallel/scripts/test_mark_tasks_complete.py -v`
   - **Done when**: All Python tests pass
@@ -216,7 +216,7 @@ Focus: Get all 6 gates functional end-to-end. Skip edge cases initially, accept 
 
 Focus: Verify gates work together. Extend stop hook tests for merged+incomplete scenario.
 
-- [ ] 2.1 Add merged+incomplete and merged+complete test scenarios to test_stop_hook.sh
+- [x] 2.1 Add merged+incomplete and merged+complete test scenarios to test_stop_hook.sh
   - **Do**:
     1. Extend `ralph-parallel/scripts/test_stop_hook.sh`
     2. Add test `T-SH-MERGED-INCOMPLETE`:
@@ -241,7 +241,7 @@ Focus: Verify gates work together. Extend stop hook tests for merged+incomplete 
   - _Requirements: AC-7.3_
   - _Design: Test Strategy - test_stop_hook.sh_
 
-- [ ] 2.2 [VERIFY] Full POC verification: `pytest ralph-parallel/scripts/test_*.py && bash ralph-parallel/scripts/test_stop_hook.sh`
+- [x] 2.2 [VERIFY] Full POC verification: `pytest ralph-parallel/scripts/test_*.py && bash ralph-parallel/scripts/test_stop_hook.sh`
   - **Do**:
     1. Run complete test suite: pytest (all Python tests) + bash (stop hook tests)
     2. Verify zero test failures, zero regressions
@@ -270,7 +270,7 @@ Focus: Harden edge cases, improve error messages, ensure backward compatibility.
   - **Commit**: `refactor(scripts): add edge case handling to validate-pre-merge.py`
   - _Design: Error Handling table_
 
-- [ ] 3.2 Harden merge-guard.sh edge cases
+- [x] 3.2 Harden merge-guard.sh edge cases
   - **Do**:
     1. Handle case where SCRIPT_DIR resolution fails (BASH_SOURCE edge cases)
     2. Ensure fast path exit for non-.dispatch-state.json files is first check after tool_name
