@@ -140,7 +140,8 @@ else
   for state_file in "$PROJECT_ROOT"/specs/*/.dispatch-state.json; do
     [ -f "$state_file" ] || continue
     FILE_STATUS=$(jq -r '.status // "unknown"' "$state_file" 2>/dev/null) || continue
-    [ "$FILE_STATUS" = "dispatched" ] || continue
+    # Include "merged" in scan — it still needs completion check (prevents bypass)
+    [ "$FILE_STATUS" = "dispatched" ] || [ "$FILE_STATUS" = "merged" ] || continue
 
     COORD_SID=$(jq -r '.coordinatorSessionId // empty' "$state_file" 2>/dev/null) || COORD_SID=""
     SCAN_SPEC=$(basename "$(dirname "$state_file")")
@@ -201,8 +202,10 @@ DISPATCHED_AT=$(jq -r '.dispatchedAt // "unknown"' "$DISPATCH_STATE" 2>/dev/null
 # --- Block counter file path ---
 COUNTER_FILE="/tmp/ralph-stop-${SPEC_NAME}-${SESSION_ID}"
 
-# --- Terminal status check: any status other than "dispatched" ---
-if [ "$STATUS" != "dispatched" ]; then
+# --- Terminal status check ---
+# "merged" falls through to completion check (prevents bypass).
+# Other terminal statuses (aborted, superseded, stale) allow immediate stop.
+if [ "$STATUS" != "dispatched" ] && [ "$STATUS" != "merged" ]; then
   cleanup_and_allow "$COUNTER_FILE"
 fi
 

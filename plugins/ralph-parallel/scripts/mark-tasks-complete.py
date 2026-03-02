@@ -29,6 +29,8 @@ def main():
                         help='Path to tasks.md')
     parser.add_argument('--dry-run', action='store_true',
                         help='Print what would be changed without writing')
+    parser.add_argument('--strict', action='store_true',
+                        help='Only mark tasks that are already [x] (cross-check mode)')
     args = parser.parse_args()
 
     # Read dispatch-state.json
@@ -91,6 +93,7 @@ def main():
     marked = 0
     already_complete = 0
     not_found = 0
+    skipped = []  # strict mode tracking
 
     for task_id in task_ids:
         # Escape dots in task ID for regex
@@ -103,7 +106,21 @@ def main():
             already_complete += 1
             continue
 
-        # Try to mark incomplete -> complete
+        # In strict mode: task is [ ] but in completedGroup = suspicious
+        if args.strict:
+            incomplete_pattern = re.compile(
+                rf'^- \[ \] {escaped_id}\b', re.MULTILINE)
+            if incomplete_pattern.search(content):
+                skipped.append(task_id)
+                print(f"WARNING: Task {task_id} is in completedGroup but still "
+                      f"unchecked [ ] in tasks.md — skipping (strict mode)",
+                      file=sys.stderr)
+                continue
+            # Task not found at all
+            not_found += 1
+            continue
+
+        # Default mode: mark incomplete -> complete (existing behavior)
         incomplete_pattern = re.compile(
             rf'^(- )\[ \]( {escaped_id}\b)', re.MULTILINE)
         new_content, count = incomplete_pattern.subn(r'\1[x]\2', content)
@@ -125,9 +142,16 @@ def main():
         "alreadyComplete": already_complete,
         "notFound": not_found,
     }
+    if args.strict:
+        result["strict"] = True
+        result["skipped"] = skipped
     if args.dry_run:
         result["dryRun"] = True
     print(json.dumps(result))
+
+    # In strict mode, exit non-zero if any tasks were skipped
+    if args.strict and skipped:
+        sys.exit(2)
     sys.exit(0)
 
 

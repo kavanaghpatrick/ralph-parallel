@@ -120,6 +120,70 @@ if [ $VERIFY_EXIT -ne 0 ]; then
   exit 2
 fi
 
+# --- Stage 1.5: VERIFY task phase gate ---
+# If the completed task is a [VERIFY] checkpoint, enforce full quality gate.
+IS_VERIFY=false
+while IFS= read -r vline; do
+  if echo "$vline" | grep -qE "^\s*- \[.\] ${COMPLETED_SPEC_TASK}\b" && echo "$vline" | grep -qF "[VERIFY]"; then
+    IS_VERIFY=true
+    break
+  fi
+done < "$SPEC_DIR/tasks.md"
+
+if [ "$IS_VERIFY" = true ]; then
+  echo "ralph-parallel: VERIFY checkpoint detected for task $COMPLETED_SPEC_TASK — running full phase gate" >&2
+
+  # Check all preceding tasks in same phase are [x]
+  TASK_PHASE=$(echo "$COMPLETED_SPEC_TASK" | cut -d. -f1)
+  UNCHECKED_PRECEDING=""
+  while IFS= read -r pline; do
+    PTID=$(echo "$pline" | grep -oE '^\s*- \[ \] [0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+')
+    if [ -n "$PTID" ]; then
+      PPHASE=$(echo "$PTID" | cut -d. -f1)
+      if [ "$PPHASE" = "$TASK_PHASE" ]; then
+        # Compare: PTID < COMPLETED_SPEC_TASK (by numeric X.Y ordering)
+        PT_MAJOR=$(echo "$PTID" | cut -d. -f1)
+        PT_MINOR=$(echo "$PTID" | cut -d. -f2)
+        CT_MAJOR=$(echo "$COMPLETED_SPEC_TASK" | cut -d. -f1)
+        CT_MINOR=$(echo "$COMPLETED_SPEC_TASK" | cut -d. -f2)
+        if [ "$PT_MAJOR" -lt "$CT_MAJOR" ] 2>/dev/null || \
+           { [ "$PT_MAJOR" -eq "$CT_MAJOR" ] && [ "$PT_MINOR" -lt "$CT_MINOR" ]; } 2>/dev/null; then
+          UNCHECKED_PRECEDING="$UNCHECKED_PRECEDING $PTID"
+        fi
+      fi
+    fi
+  done < "$SPEC_DIR/tasks.md"
+
+  if [ -n "$UNCHECKED_PRECEDING" ]; then
+    echo "VERIFY PHASE GATE FAILED for task $COMPLETED_SPEC_TASK" >&2
+    echo "Unchecked preceding tasks in phase $TASK_PHASE:$UNCHECKED_PRECEDING" >&2
+    echo "All tasks in the phase must be complete before the VERIFY checkpoint passes." >&2
+    exit 2
+  fi
+
+  # Run ALL quality commands (build, test, lint) regardless of periodic intervals
+  for SLOT in build test lint; do
+    SLOT_CMD=$(jq -r ".qualityCommands.${SLOT} // empty" "$DISPATCH_STATE" 2>/dev/null || true)
+    if [ "$SLOT_CMD" = "null" ]; then SLOT_CMD=""; fi
+    if [ -n "$SLOT_CMD" ]; then
+      echo "ralph-parallel: VERIFY phase gate — running $SLOT: $SLOT_CMD" >&2
+      SLOT_OUTPUT=$(cd "$PROJECT_ROOT" && eval "$SLOT_CMD" 2>&1) && SLOT_EXIT=0 || SLOT_EXIT=$?
+      if [ $SLOT_EXIT -ne 0 ]; then
+        echo "VERIFY PHASE GATE FAILED: $SLOT command failed (exit $SLOT_EXIT)" >&2
+        echo "Command: $SLOT_CMD" >&2
+        echo "--- Output (last 50 lines) ---" >&2
+        echo "$SLOT_OUTPUT" | tail -50 >&2
+        echo "Fix $SLOT errors before completing this VERIFY checkpoint." >&2
+        exit 2
+      fi
+      echo "ralph-parallel: VERIFY $SLOT passed" >&2
+    fi
+  done
+
+  echo "ralph-parallel: VERIFY phase gate passed for task $COMPLETED_SPEC_TASK" >&2
+  # Continue to remaining stages (typecheck, file check, etc.) for additional safety
+fi
+
 # --- Stage 2: Supplemental typecheck ---
 DISPATCH_STATE="$SPEC_DIR/.dispatch-state.json"
 TYPECHECK_CMD=$(jq -r '.qualityCommands.typecheck // empty' "$DISPATCH_STATE" 2>/dev/null || true)
@@ -223,6 +287,9 @@ parse_test_count() {
 }
 
 TEST_CMD=$(jq -r '.qualityCommands.test // empty' "$DISPATCH_STATE" 2>/dev/null || true)
+BASELINE_HARD_FAIL=$(jq -r '.baselineSnapshot.hardFail // false' "$DISPATCH_STATE" 2>/dev/null || true)
+BASELINE_EXIT_CODE=$(jq -r '.baselineSnapshot.exitCode // empty' "$DISPATCH_STATE" 2>/dev/null || true)
+if [ "$BASELINE_HARD_FAIL" = "null" ]; then BASELINE_HARD_FAIL="false"; fi
 TEST_INTERVAL=${TEST_INTERVAL:-2}
 
 if [ -n "$TEST_CMD" ]; then
@@ -234,17 +301,6 @@ if [ -n "$TEST_CMD" ]; then
   if [ $((COMPLETED_COUNT % TEST_INTERVAL)) -eq 0 ] || [ "$COMPLETED_COUNT" -le 1 ]; then
     echo "ralph-parallel: Running test suite regression check ($COMPLETED_COUNT tasks done): $TEST_CMD" >&2
     TEST_OUTPUT=$(cd "$PROJECT_ROOT" && eval "$TEST_CMD" 2>&1) && TEST_EXIT=0 || TEST_EXIT=$?
-    if [ $TEST_EXIT -ne 0 ]; then
-      echo "REGRESSION CHECK FAILED: test suite" >&2
-      echo "Command: $TEST_CMD (exit $TEST_EXIT)" >&2
-      echo "--- Output (last 50 lines) ---" >&2
-      echo "$TEST_OUTPUT" | tail -50 >&2
-      echo "Your changes broke existing tests. Fix ALL test failures before marking task complete." >&2
-      exit 2
-    fi
-
-    # Strip ANSI escape codes before parsing test output
-    TEST_OUTPUT=$(printf '%s' "$TEST_OUTPUT" | sed $'s/\x1b\\[[0-9;]*m//g')
 
     # --- Baseline comparison: detect test count regression ---
     BASELINE_COUNT=$(jq -r '.baselineSnapshot.testCount // empty' "$DISPATCH_STATE" 2>/dev/null || true)
@@ -252,26 +308,51 @@ if [ -n "$TEST_CMD" ]; then
     if [ "$BASELINE_COUNT" = "null" ] || [ "$BASELINE_COUNT" = "" ]; then
       BASELINE_COUNT=""
     fi
-    if [ -n "$BASELINE_COUNT" ] && [ "$BASELINE_COUNT" -gt 0 ] 2>/dev/null; then
-      CURRENT_COUNT=$(parse_test_count "$TEST_OUTPUT")
-      if [ "$CURRENT_COUNT" -gt 0 ] 2>/dev/null; then
-        # For small baselines, allow at most 1 test drop; otherwise allow 10% drop
-        if [ "$BASELINE_COUNT" -le 10 ] 2>/dev/null; then
-          THRESHOLD=$((BASELINE_COUNT - 1))
-          [ "$THRESHOLD" -lt 1 ] && THRESHOLD=1
-        else
-          THRESHOLD=$(( BASELINE_COUNT * 90 / 100 ))
+
+    if [ $TEST_EXIT -ne 0 ]; then
+      # Tests failed — check if this is a pre-existing hardFail
+      if [ "$BASELINE_HARD_FAIL" = "true" ] && [ -n "$BASELINE_EXIT_CODE" ] && \
+         [ "$TEST_EXIT" -eq "$BASELINE_EXIT_CODE" ] 2>/dev/null; then
+        echo "ralph-parallel: Tests failing with same exit code ($TEST_EXIT) as broken baseline — pre-existing, allowing" >&2
+      else
+        echo "REGRESSION CHECK FAILED: test suite" >&2
+        echo "Command: $TEST_CMD (exit $TEST_EXIT)" >&2
+        echo "--- Output (last 50 lines) ---" >&2
+        echo "$TEST_OUTPUT" | tail -50 >&2
+        if [ "$BASELINE_HARD_FAIL" = "true" ]; then
+          echo "Baseline was also broken (exit ${BASELINE_EXIT_CODE:-unknown}) but this is a DIFFERENT failure." >&2
         fi
-        if [ "$CURRENT_COUNT" -lt "$THRESHOLD" ]; then
-          echo "TEST COUNT REGRESSION DETECTED" >&2
-          echo "Baseline: $BASELINE_COUNT tests passing at dispatch" >&2
-          echo "Current:  $CURRENT_COUNT tests passing now" >&2
-          echo "Threshold: $THRESHOLD (minimum allowed)" >&2
-          echo "Your changes may have deleted or broken existing tests." >&2
-          echo "Restore missing tests before marking task complete." >&2
-          exit 2
+        echo "Fix ALL test failures before marking task complete." >&2
+        exit 2
+      fi
+    else
+      # Tests passed — do baseline count comparison
+      TEST_OUTPUT_CLEAN=$(printf '%s' "$TEST_OUTPUT" | sed $'s/\x1b\\[[0-9;]*m//g')
+
+      if [ "$BASELINE_HARD_FAIL" = "true" ]; then
+        echo "ralph-parallel: Tests now PASSING (improved from broken baseline)" >&2
+      fi
+
+      if [ -n "$BASELINE_COUNT" ] && [ "$BASELINE_COUNT" -gt 0 ] 2>/dev/null; then
+        CURRENT_COUNT=$(parse_test_count "$TEST_OUTPUT_CLEAN")
+        if [ "$CURRENT_COUNT" -gt 0 ] 2>/dev/null; then
+          if [ "$BASELINE_COUNT" -le 10 ] 2>/dev/null; then
+            THRESHOLD=$((BASELINE_COUNT - 1))
+            [ "$THRESHOLD" -lt 1 ] && THRESHOLD=1
+          else
+            THRESHOLD=$(( BASELINE_COUNT * 90 / 100 ))
+          fi
+          if [ "$CURRENT_COUNT" -lt "$THRESHOLD" ]; then
+            echo "TEST COUNT REGRESSION DETECTED" >&2
+            echo "Baseline: $BASELINE_COUNT tests passing at dispatch" >&2
+            echo "Current:  $CURRENT_COUNT tests passing now" >&2
+            echo "Threshold: $THRESHOLD (minimum allowed)" >&2
+            echo "Your changes may have deleted or broken existing tests." >&2
+            echo "Restore missing tests before marking task complete." >&2
+            exit 2
+          fi
+          echo "ralph-parallel: Test count OK ($CURRENT_COUNT current vs $BASELINE_COUNT baseline)" >&2
         fi
-        echo "ralph-parallel: Test count OK ($CURRENT_COUNT current vs $BASELINE_COUNT baseline)" >&2
       fi
     fi
   fi
