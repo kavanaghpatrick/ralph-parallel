@@ -255,8 +255,17 @@ test_TSH1_clean_block_and_release() {
   assert_stdout_json "$stdout" "block" "test-spec" "should output JSON block decision"
   assert_no_stderr "$stderr" "no stderr on block"
 
-  # Step 2: Update to terminal status (merged)
-  write_dispatch_state "$tmpdir" "sess-A" "merged"
+  # Step 2: Update to terminal status (merged) with all groups complete
+  # "merged" now falls through to completion check — needs completedGroups + tasks.md
+  cat > "$tmpdir/specs/test-spec/.dispatch-state.json" <<JSON
+{
+  "coordinatorSessionId": "sess-A",
+  "status": "merged",
+  "groups": [{"name": "g1"}],
+  "completedGroups": ["g1"]
+}
+JSON
+  echo "- [x] 1.1 Done" > "$tmpdir/specs/test-spec/tasks.md"
 
   # Step 3: Trigger stop hook again with TEAM_NAME -- should allow with no output and clean counter
   stdout=$(cd "$tmpdir" && echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
@@ -690,6 +699,8 @@ test_TSH9_counter_cleanup_terminal_status() {
   # Test each terminal status: merged, aborted, stale
   # Must use CLAUDE_CODE_TEAM_NAME so the script takes the team-name branch
   # (not scan mode, which skips non-dispatched states in its scan loop)
+  # NOTE: "merged" now falls through to completion check — it needs all tasks [x]
+  # and all groups completed to allow stop and cleanup counter.
   for terminal_status in merged aborted stale; do
     # Setup: create a dispatch, block once to create counter file
     write_dispatch_state "$tmpdir" "sess-A" "dispatched"
@@ -700,7 +711,20 @@ test_TSH9_counter_cleanup_terminal_status() {
     assert_true "$([ -f "$counter_file" ] && echo true || echo false)" "counter exists before $terminal_status"
 
     # Transition to terminal status
-    write_dispatch_state "$tmpdir" "sess-A" "$terminal_status"
+    # For "merged", also set completedGroups and create tasks.md with all [x]
+    if [ "$terminal_status" = "merged" ]; then
+      cat > "$tmpdir/specs/test-spec/.dispatch-state.json" <<JSON
+{
+  "coordinatorSessionId": "sess-A",
+  "status": "merged",
+  "groups": [{"name": "g1"}],
+  "completedGroups": ["g1"]
+}
+JSON
+      echo "- [x] 1.1 Done" > "$tmpdir/specs/test-spec/tasks.md"
+    else
+      write_dispatch_state "$tmpdir" "sess-A" "$terminal_status"
+    fi
     echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
       | (cd "$tmpdir" && env -u CLAUDE_CODE_AGENT_NAME CLAUDE_CODE_TEAM_NAME="test-spec-parallel" bash "$STOP_HOOK") > /dev/null 2>&1 || true
 
@@ -926,8 +950,17 @@ test_TSH15_heartbeat_only_on_block() {
 
   local state_file="$tmpdir/specs/test-spec/.dispatch-state.json"
 
-  # Scenario A: Terminal status (merged) -> allow stop, no heartbeat update
-  write_dispatch_state "$tmpdir" "sess-A" "merged"
+  # Scenario A: Terminal status (merged) with all complete -> allow stop, no heartbeat update
+  # "merged" now falls through to completion check — needs completedGroups + tasks.md
+  cat > "$state_file" <<JSON
+{
+  "coordinatorSessionId": "sess-A",
+  "status": "merged",
+  "groups": [{"name": "g1"}],
+  "completedGroups": ["g1"]
+}
+JSON
+  echo "- [x] 1.1 Done" > "$tmpdir/specs/test-spec/tasks.md"
 
   # Record the initial state (no heartbeat)
   local has_heartbeat_before
@@ -1095,6 +1128,98 @@ JSON
   end_test "Legacy dispatch (no lastHeartbeat, no coordinatorSessionId) -> both hooks work"
 }
 
+# --- Test 18 (T-SH18): Null coordinatorSessionId allows stop (scan mode) ---
+
+test_TSH18_null_coordinator_allows_scan() {
+  begin_test "T-SH18"
+  local tmpdir; tmpdir=$(setup_project)
+  write_dispatch_state "$tmpdir" "null" "dispatched"
+  write_team_config "test-spec" 1
+
+  # In scan mode (no TEAM_NAME), null coordinatorSessionId = explicitly released
+  local stdout exit_code
+  stdout=$(echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" 2>/dev/null) || true
+  exit_code=$?
+
+  assert_exit_code "$exit_code" 0 "null coordinator exits 0"
+  assert_true "$([ -z "$stdout" ] && echo true || echo false)" "null coordinator allows stop (no JSON block)"
+
+  cleanup_team_config "test-spec"; rm -rf "$tmpdir"
+  end_test "Null coordinatorSessionId allows stop (scan mode)"
+}
+
+# --- Test 19 (T-SH19): Null coordinatorSessionId allows stop (team-name mode) ---
+
+test_TSH19_null_coordinator_allows_team() {
+  begin_test "T-SH19"
+  local tmpdir; tmpdir=$(setup_project)
+  write_dispatch_state "$tmpdir" "null" "dispatched"
+  write_team_config "test-spec" 1
+
+  # With TEAM_NAME context, null coordinatorSessionId = explicitly released
+  local stdout exit_code
+  stdout=$(cd "$tmpdir" && echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+    | env -u CLAUDE_CODE_AGENT_NAME CLAUDE_CODE_TEAM_NAME="test-spec-parallel" bash "$STOP_HOOK" 2>/dev/null) || true
+  exit_code=$?
+
+  assert_exit_code "$exit_code" 0 "null coordinator exits 0 (team mode)"
+  assert_true "$([ -z "$stdout" ] && echo true || echo false)" "null coordinator allows stop (no JSON block)"
+
+  cleanup_team_config "test-spec"; rm -rf "$tmpdir"
+  end_test "Null coordinatorSessionId allows stop (team-name mode)"
+}
+
+# --- Test 20 (T-SH20): Session-setup does not re-claim null coordinator ---
+
+test_TSH20_null_coordinator_not_reclaimed() {
+  begin_test "T-SH20"
+  local tmpdir; tmpdir=$(setup_git_project)
+  write_dispatch_state "$tmpdir" "null" "dispatched"
+  write_team_config "test-spec" 1
+
+  echo "{\"session_id\":\"sess-NEW\",\"source\":\"startup\",\"cwd\":\"$tmpdir\"}" \
+    | run_session_hook "$tmpdir" > /dev/null 2>&1
+
+  # coordinatorSessionId should remain null (not overwritten with sess-NEW)
+  local coord_is_null
+  coord_is_null=$(jq 'has("coordinatorSessionId") and .coordinatorSessionId == null' "$tmpdir/specs/test-spec/.dispatch-state.json" 2>/dev/null) || coord_is_null="false"
+  assert_true "$coord_is_null" "null coordinatorSessionId not re-claimed"
+
+  cleanup_team_config "test-spec"; rm -rf "$tmpdir"
+  end_test "Null coordinatorSessionId not re-claimed by session-setup"
+}
+
+# --- Test 21 (T-SH21): Missing field still blocks (legacy backward compat after null fix) ---
+
+test_TSH21_missing_field_still_blocks() {
+  begin_test "T-SH21"
+  local tmpdir; tmpdir=$(setup_project)
+
+  # Create dispatch WITHOUT coordinatorSessionId field (legacy)
+  mkdir -p "$tmpdir/specs/test-spec"
+  cat > "$tmpdir/specs/test-spec/.dispatch-state.json" <<JSON
+{
+  "status": "dispatched",
+  "groups": [{"name": "g1"}],
+  "completedGroups": []
+}
+JSON
+  write_team_config "test-spec" 1
+
+  # Scan mode: missing field + team alive should still block (legacy behavior preserved)
+  local stdout exit_code
+  stdout=$(echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" 2>/dev/null) || true
+  exit_code=$?
+
+  assert_exit_code "$exit_code" 0 "missing field exits 0"
+  assert_stdout_json "$stdout" "block" "" "missing field still blocks (legacy behavior preserved)"
+
+  cleanup_team_config "test-spec"; rm -rf "$tmpdir"
+  end_test "Missing coordinatorSessionId still blocks (legacy preserved)"
+}
+
 # --- Backward Compat Tests ---
 
 test_TBC1_no_heartbeat_reclaims_normally() {
@@ -1143,6 +1268,116 @@ test_TBC2_no_coordinator_session_id() {
   end_test "No coordinatorSessionId -> same behavior (backward compat)"
 }
 
+# --- Test: Merged status with incomplete tasks should BLOCK ---
+
+test_TSH_MERGED_INCOMPLETE() {
+  begin_test "T-SH-MERGED-INCOMPLETE"
+  local tmpdir; tmpdir=$(setup_project)
+
+  # Write dispatch-state with status=merged, 2 groups, 2 in completedGroups
+  mkdir -p "$tmpdir/specs/test-spec"
+  cat > "$tmpdir/specs/test-spec/.dispatch-state.json" <<JSON
+{
+  "coordinatorSessionId": "sess-A",
+  "status": "merged",
+  "groups": [{"name": "g1"}, {"name": "g2"}],
+  "completedGroups": ["g1", "g2"]
+}
+JSON
+
+  # Write tasks.md with 1 unchecked task remaining
+  cat > "$tmpdir/specs/test-spec/tasks.md" <<MD
+- [x] 1.1 Task one
+- [x] 1.2 Task two
+- [ ] 1.3 Task three still unchecked
+MD
+
+  write_team_config "test-spec" 1
+
+  local stdout exit_code
+  stdout=$(echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" 2>/dev/null) || true
+  exit_code=$?
+
+  assert_exit_code "$exit_code" 0 "merged+incomplete exits 0 (JSON block)"
+  assert_stdout_json "$stdout" "block" "" "merged+incomplete emits block JSON"
+
+  cleanup_team_config "test-spec"; rm -rf "$tmpdir"
+  end_test "status=merged + unchecked tasks -> block"
+}
+
+# --- Test: Merged status with all tasks complete should ALLOW ---
+
+test_TSH_MERGED_COMPLETE() {
+  begin_test "T-SH-MERGED-COMPLETE"
+  local tmpdir; tmpdir=$(setup_project)
+
+  # Write dispatch-state with status=merged, all groups completed
+  mkdir -p "$tmpdir/specs/test-spec"
+  cat > "$tmpdir/specs/test-spec/.dispatch-state.json" <<JSON
+{
+  "coordinatorSessionId": "sess-A",
+  "status": "merged",
+  "groups": [{"name": "g1"}, {"name": "g2"}],
+  "completedGroups": ["g1", "g2"]
+}
+JSON
+
+  # Write tasks.md with all tasks checked
+  cat > "$tmpdir/specs/test-spec/tasks.md" <<MD
+- [x] 1.1 Task one
+- [x] 1.2 Task two
+- [x] 1.3 Task three
+MD
+
+  write_team_config "test-spec" 0
+
+  local stdout exit_code
+  stdout=$(echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" 2>/dev/null) || true
+  exit_code=$?
+
+  assert_exit_code "$exit_code" 0 "merged+complete exits 0"
+  assert_true "$([ -z "$stdout" ] && echo true || echo false)" "merged+complete allows stop (no JSON block)"
+
+  cleanup_team_config "test-spec"; rm -rf "$tmpdir"
+  end_test "status=merged + all tasks [x] -> allow"
+}
+
+# --- Test: Aborted status still allows immediately (no regression) ---
+
+test_TSH_ABORTED_UNCHANGED() {
+  begin_test "T-SH-ABORTED-UNCHANGED"
+  local tmpdir; tmpdir=$(setup_project)
+
+  # Write dispatch-state with status=aborted
+  mkdir -p "$tmpdir/specs/test-spec"
+  cat > "$tmpdir/specs/test-spec/.dispatch-state.json" <<JSON
+{
+  "coordinatorSessionId": "sess-A",
+  "status": "aborted",
+  "groups": [{"name": "g1"}],
+  "completedGroups": []
+}
+JSON
+
+  # tasks.md with unchecked tasks (shouldn't matter for aborted)
+  cat > "$tmpdir/specs/test-spec/tasks.md" <<MD
+- [ ] 1.1 Task one
+MD
+
+  local stdout exit_code
+  stdout=$(echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
+    | run_stop_hook "$tmpdir" 2>/dev/null) || true
+  exit_code=$?
+
+  assert_exit_code "$exit_code" 0 "aborted exits 0"
+  assert_true "$([ -z "$stdout" ] && echo true || echo false)" "aborted allows stop immediately (no JSON block)"
+
+  rm -rf "$tmpdir"
+  end_test "status=aborted still allows immediate stop (no regression)"
+}
+
 # --- Run All Tests ---
 
 echo "=== Stop Hook JSON Decision Control Test Suite ==="
@@ -1174,6 +1409,13 @@ test_TSH16_concurrent_sessions_skip_reclaim
 test_TSH17_legacy_dispatch_both_hooks
 echo ""
 
+echo "--- Null vs Missing coordinatorSessionId Tests ---"
+test_TSH18_null_coordinator_allows_scan
+test_TSH19_null_coordinator_allows_team
+test_TSH20_null_coordinator_not_reclaimed
+test_TSH21_missing_field_still_blocks
+echo ""
+
 echo "--- Ported Tests (updated expectations) ---"
 test_PORT_T1_matching_session_blocks_json
 test_PORT_T3_legacy_no_coord_blocks_json
@@ -1184,6 +1426,12 @@ echo ""
 echo "--- Backward Compatibility Tests ---"
 test_TBC1_no_heartbeat_reclaims_normally
 test_TBC2_no_coordinator_session_id
+echo ""
+
+echo "--- Merged Status Tests ---"
+test_TSH_MERGED_INCOMPLETE
+test_TSH_MERGED_COMPLETE
+test_TSH_ABORTED_UNCHANGED
 echo ""
 
 # --- Cleanup ---
