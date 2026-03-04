@@ -91,30 +91,23 @@ Display the output to the user. If `--dry-run`: STOP here.
 
 ## Step 4: Write Dispatch State
 
-```text
-1. Check specs/$specName/.dispatch-state.json:
-   - If status "dispatched": warn, set to "superseded"
-   - If status "stale": OK (team was lost), overwrite
-   - If status "merging": error, run /ralph-parallel:merge --abort first
-   - If "merged"/"superseded"/"aborted": OK, overwrite
-
-2. Write dispatch state from the partition JSON:
-   {
-     "dispatchedAt": "<ISO timestamp>",
-     "coordinatorSessionId": "$CLAUDE_SESSION_ID",
-     "strategy": "$strategy",
-     "maxTeammates": $maxTeammates,
-     "groups": <from partition JSON>,
-     "serialTasks": <from partition JSON>,
-     "verifyTasks": <from partition JSON>,
-     "qualityCommands": <from partition JSON>,
-     "baselineSnapshot": null,
-     "status": "dispatched",
-     "completedGroups": []
-   }
-
-   Read `$CLAUDE_SESSION_ID` from the environment. If empty or unset, write `"coordinatorSessionId": null` and output a warning: "Warning: CLAUDE_SESSION_ID not available — session isolation disabled for this dispatch. Auto-reclaim on next SessionStart will fix this."
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/write-dispatch-state.py \
+  --partition-file /tmp/$specName-partition.json \
+  --strategy $strategy \
+  --max-teammates $maxTeammates \
+  --spec-dir specs/$specName
 ```
+
+The script:
+- Reads partition JSON for groups/serialTasks/verifyTasks/qualityCommands
+- Reads `$CLAUDE_SESSION_ID` from env (null fallback with warning)
+- Checks existing dispatch state (supersedes "dispatched", errors on "merging")
+- Writes `.dispatch-state.json` atomically with all 11 fields
+- Outputs JSON status to stdout
+
+If the script reports "superseding", acknowledge to user.
+If the script exits non-zero, display stderr and stop.
 
 ## Step 4.5: Capture Baseline Test Snapshot (via script)
 
