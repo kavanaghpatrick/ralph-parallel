@@ -24,6 +24,7 @@ parse_quality_commands_from_tasks = mod.parse_quality_commands_from_tasks
 parse_tasks = mod.parse_tasks
 build_dependency_graph = mod.build_dependency_graph
 partition_tasks = mod.partition_tasks
+_rebalance_groups = mod._rebalance_groups
 
 
 # ── Quality Command Discovery ──────────────────────────────────
@@ -393,3 +394,117 @@ class TestRebalanceOwnership:
                     for f in task_files[task_id]:
                         assert f in owned, \
                             f"Task {task_id} needs '{f}' but group '{g['name']}' doesn't own it"
+
+
+# ── _task_id_key Edge Cases (Fix 6) ──────────────────────────
+
+
+class TestTaskIdKeyEdgeCases:
+    """Fix 6: Defensive parsing for malformed task IDs."""
+
+    def test_single_number(self):
+        assert _task_id_key("1") == (1, 0)
+
+    def test_non_numeric(self):
+        assert _task_id_key("abc") == (0, 0)
+
+    def test_empty_string(self):
+        assert _task_id_key("") == (0, 0)
+
+    def test_extra_dots(self):
+        assert _task_id_key("1.2.3") == (1, 2)
+
+
+# ── _discover_node Runner Prefixes (Fix 7) ───────────────────
+
+
+class TestDiscoverNodeRunnerPrefixes:
+    """Fix 7: Known runners should not get double-prefixed with npx."""
+
+    def test_bun_test_no_npx(self, tmp_path):
+        (tmp_path / "package.json").write_text(json.dumps({
+            "scripts": {"test": "bun test"}
+        }))
+        result = _discover_node(tmp_path)
+        assert result["test"] == "bun test"
+
+    def test_yarn_test_no_npx(self, tmp_path):
+        (tmp_path / "package.json").write_text(json.dumps({
+            "scripts": {"test": "yarn test"}
+        }))
+        result = _discover_node(tmp_path)
+        assert result["test"] == "yarn test"
+
+    def test_deno_test_no_npx(self, tmp_path):
+        (tmp_path / "package.json").write_text(json.dumps({
+            "scripts": {"test": "deno test"}
+        }))
+        result = _discover_node(tmp_path)
+        assert result["test"] == "deno test"
+
+    def test_tsx_no_npx(self, tmp_path):
+        (tmp_path / "package.json").write_text(json.dumps({
+            "scripts": {"test": "tsx run.ts"}
+        }))
+        result = _discover_node(tmp_path)
+        assert result["test"] == "tsx run.ts"
+
+    def test_bare_vitest_still_gets_npx(self, tmp_path):
+        (tmp_path / "package.json").write_text(json.dumps({
+            "scripts": {"test": "vitest"}
+        }))
+        result = _discover_node(tmp_path)
+        assert result["test"] == "npx vitest"
+
+    def test_node_no_npx(self, tmp_path):
+        (tmp_path / "package.json").write_text(json.dumps({
+            "scripts": {"test": "node test.js"}
+        }))
+        result = _discover_node(tmp_path)
+        assert result["test"] == "node test.js"
+
+
+# ── _rebalance_groups File Ownership (Fix 5) ─────────────────
+
+
+class TestRebalanceFileOwnership:
+    """Fix 5: file_ownership dict fully rebuilt after each task move."""
+
+    def test_file_ownership_consistent_after_rebalance(self):
+        """After rebalance, file_ownership matches actual group contents."""
+        # Create imbalanced groups: group 0 has 4 tasks, group 1 has 1 task
+        groups = [
+            {
+                'name': 'heavy',
+                'tasks': [
+                    {'id': '1.1', 'files': ['a.ts'], 'description': 'A', 'phase': 1, 'markers': set()},
+                    {'id': '1.2', 'files': ['b.ts'], 'description': 'B', 'phase': 1, 'markers': set()},
+                    {'id': '1.3', 'files': ['c.ts'], 'description': 'C', 'phase': 1, 'markers': set()},
+                    {'id': '1.4', 'files': ['d.ts'], 'description': 'D', 'phase': 1, 'markers': set()},
+                ],
+                'ownedFiles': {'a.ts', 'b.ts', 'c.ts', 'd.ts'},
+                'dependencies': [],
+            },
+            {
+                'name': 'light',
+                'tasks': [
+                    {'id': '1.5', 'files': ['e.ts'], 'description': 'E', 'phase': 1, 'markers': set()},
+                ],
+                'ownedFiles': {'e.ts'},
+                'dependencies': [],
+            },
+        ]
+        file_ownership = {
+            'a.ts': 0, 'b.ts': 0, 'c.ts': 0, 'd.ts': 0, 'e.ts': 1,
+        }
+
+        _rebalance_groups(groups, file_ownership)
+
+        # Verify file_ownership is consistent with group contents
+        expected_ownership = {}
+        for g_idx, g in enumerate(groups):
+            for t in g['tasks']:
+                for f in t['files']:
+                    expected_ownership[f] = g_idx
+
+        assert file_ownership == expected_ownership
