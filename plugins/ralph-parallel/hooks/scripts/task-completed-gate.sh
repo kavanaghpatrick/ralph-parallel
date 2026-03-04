@@ -215,6 +215,11 @@ while IFS= read -r fline; do
   fi
 done < "$SPEC_DIR/tasks.md"
 
+# Skip file check for sentinel values (none, n/a, -, empty)
+case "$(echo "$TASK_FILES" | tr '[:upper:]' '[:lower:]')" in
+  none|n/a|n/a\ *|-|"") TASK_FILES="" ;;
+esac
+
 if [ -n "$TASK_FILES" ]; then
   MISSING=""
   IFS=',' read -ra FILE_LIST <<< "$TASK_FILES"
