@@ -145,13 +145,19 @@ if [ "$DISPATCH_ACTIVE" = true ]; then
           || echo "ralph-parallel: Warning: failed to auto-reclaim dispatch for '$ACTIVE_SPEC'"
       fi
     elif [ -z "$COORD_SID" ] && [ "$TEAM_EXISTS" = true ]; then
-      # Legacy dispatch (no field) -- stamp current session
-      # Error path: if write fails, dispatch stays without coordinatorSessionId.
-      # Stop hook treats this as ambiguous ownership = still blocks (safe).
-      jq --arg sid "$SESSION_ID" '.coordinatorSessionId = $sid' "$DISPATCH_FILE" > "${DISPATCH_FILE}.tmp.$$" 2>/dev/null \
-        && mv "${DISPATCH_FILE}.tmp.$$" "$DISPATCH_FILE" 2>/dev/null \
-        && echo "ralph-parallel: Stamped session ID on legacy dispatch for '$ACTIVE_SPEC'" \
-        || echo "ralph-parallel: Warning: failed to stamp session ID on dispatch for '$ACTIVE_SPEC'"
+      # Distinguish explicitly released (null) from missing (legacy)
+      COORD_EXISTS=$(jq 'has("coordinatorSessionId")' "$DISPATCH_FILE" 2>/dev/null) || COORD_EXISTS="false"
+      if [ "$COORD_EXISTS" = "false" ]; then
+        # Legacy dispatch (field missing) -- stamp current session
+        # Error path: if write fails, dispatch stays without coordinatorSessionId.
+        # Stop hook treats this as ambiguous ownership = still blocks (safe).
+        jq --arg sid "$SESSION_ID" '.coordinatorSessionId = $sid' "$DISPATCH_FILE" > "${DISPATCH_FILE}.tmp.$$" 2>/dev/null \
+          && mv "${DISPATCH_FILE}.tmp.$$" "$DISPATCH_FILE" 2>/dev/null \
+          && echo "ralph-parallel: Stamped session ID on legacy dispatch for '$ACTIVE_SPEC'" \
+          || echo "ralph-parallel: Warning: failed to stamp session ID on dispatch for '$ACTIVE_SPEC'"
+      else
+        echo "ralph-parallel: Dispatch '$ACTIVE_SPEC' was explicitly released (coordinatorSessionId: null). Skipping auto-claim."
+      fi
     fi
   fi
 
@@ -183,5 +189,25 @@ if [ "$DISPATCH_ACTIVE" = true ]; then
     echo "ralph-parallel: Run /ralph-parallel:status to see progress"
   fi
 fi
+
+# --- Orphaned team cleanup ---
+# Detect teams for terminal-state dispatches and clean up
+for team_dir in "$HOME/.claude/teams/"*-parallel; do
+  [ -d "$team_dir" ] || continue
+  TEAM_SPEC=$(basename "$team_dir" | sed 's/-parallel$//')
+  ORPHAN_STATE="$GIT_ROOT/specs/$TEAM_SPEC/.dispatch-state.json"
+
+  # No dispatch state for this team — can't determine status, skip
+  [ -f "$ORPHAN_STATE" ] || continue
+
+  ORPHAN_STATUS=$(jq -r '.status // "unknown"' "$ORPHAN_STATE" 2>/dev/null) || continue
+
+  # Only clean up terminal states: aborted and superseded
+  # Do NOT touch: dispatched (active), merged (completed), stale (resumable), merging (in progress)
+  if [ "$ORPHAN_STATUS" = "aborted" ] || [ "$ORPHAN_STATUS" = "superseded" ]; then
+    rm -rf "$team_dir" 2>/dev/null || true
+    echo "ralph-parallel: Cleaned up orphaned team for '$TEAM_SPEC' (status: $ORPHAN_STATUS)"
+  fi
+done
 
 exit 0
