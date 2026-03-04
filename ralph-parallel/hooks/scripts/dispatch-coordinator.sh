@@ -140,7 +140,8 @@ else
   for state_file in "$PROJECT_ROOT"/specs/*/.dispatch-state.json; do
     [ -f "$state_file" ] || continue
     FILE_STATUS=$(jq -r '.status // "unknown"' "$state_file" 2>/dev/null) || continue
-    [ "$FILE_STATUS" = "dispatched" ] || continue
+    # Include "merged" in scan — it still needs completion check (prevents bypass)
+    [ "$FILE_STATUS" = "dispatched" ] || [ "$FILE_STATUS" = "merged" ] || continue
 
     COORD_SID=$(jq -r '.coordinatorSessionId // empty' "$state_file" 2>/dev/null) || COORD_SID=""
     SCAN_SPEC=$(basename "$(dirname "$state_file")")
@@ -234,7 +235,9 @@ fi
 TOTAL_GROUPS=$(jq '.groups | length' "$DISPATCH_STATE" 2>/dev/null) || exit 0
 COMPLETED_GROUPS=$(jq '.completedGroups | length' "$DISPATCH_STATE" 2>/dev/null) || COMPLETED_GROUPS=0
 
+ALL_GROUPS_DONE=false
 if [ "$COMPLETED_GROUPS" -ge "$TOTAL_GROUPS" ] 2>/dev/null; then
+  ALL_GROUPS_DONE=true
   # All groups complete — check if any tasks remain incomplete
   TASKS_MD="$SPEC_DIR/tasks.md"
   if [ -f "$TASKS_MD" ]; then
@@ -291,8 +294,17 @@ NEW_COUNT=$((BLOCK_COUNT + 1))
 write_block_counter "$COUNTER_FILE" "$NEW_COUNT" "$STATUS" "$DISPATCHED_AT" || true
 
 # --- Build and emit JSON block ---
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
 if [ "$TEAM_LOST" = true ]; then
   REASON="[Dispatch: ${SPEC_NAME}] TEAMMATES LOST (${COMPLETED_GROUPS}/${TOTAL_GROUPS} groups done). Team died. Re-run /ralph-parallel:dispatch to re-spawn. Do NOT execute tasks yourself."
+elif [ "$ALL_GROUPS_DONE" = true ]; then
+  CLEANUP_STEPS="All ${TOTAL_GROUPS} groups done but ${INCOMPLETE:-some} tasks still incomplete in tasks.md."
+  CLEANUP_STEPS="${CLEANUP_STEPS} Cleanup checklist:"
+  CLEANUP_STEPS="${CLEANUP_STEPS} (1) Run mark-tasks-complete: python3 ${PLUGIN_ROOT:+${PLUGIN_ROOT}/}scripts/mark-tasks-complete.py --dispatch-state specs/${SPEC_NAME}/.dispatch-state.json --tasks-md specs/${SPEC_NAME}/tasks.md"
+  CLEANUP_STEPS="${CLEANUP_STEPS} (2) SendMessage shutdown_request to each teammate"
+  CLEANUP_STEPS="${CLEANUP_STEPS} (3) Update .dispatch-state.json status to merged"
+  CLEANUP_STEPS="${CLEANUP_STEPS} (4) TeamDelete"
+  REASON="[Dispatch: ${SPEC_NAME}] ${CLEANUP_STEPS}"
 elif [ "$STOP_HOOK_ACTIVE" = "true" ]; then
   REASON="[Dispatch: ${SPEC_NAME}] Still active (${COMPLETED_GROUPS}/${TOTAL_GROUPS} groups done, block ${NEW_COUNT}/${MAX_BLOCKS}). Check TaskList, coordinate teammates. Work remains."
 else
