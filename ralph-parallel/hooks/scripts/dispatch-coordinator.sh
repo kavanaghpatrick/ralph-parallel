@@ -60,7 +60,7 @@ read_block_counter() {
   local stored_count stored_status stored_ts
   stored_count=$(echo "$stored" | cut -d: -f1)
   stored_status=$(echo "$stored" | cut -d: -f2)
-  stored_ts=$(echo "$stored" | cut -d: -f3)
+  stored_ts=$(echo "$stored" | cut -d: -f3-)
 
   # Reset if dispatch identity changed (abort/re-dispatch)
   if [ "$stored_status" != "$current_status" ] || [ "$stored_ts" != "$dispatched_at" ]; then
