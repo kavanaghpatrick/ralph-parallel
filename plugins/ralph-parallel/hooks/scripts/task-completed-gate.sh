@@ -120,6 +120,9 @@ if [ $VERIFY_EXIT -ne 0 ]; then
   exit 2
 fi
 
+# --- Assign DISPATCH_STATE before Stage 1.5 (needs it for quality commands) ---
+DISPATCH_STATE="$SPEC_DIR/.dispatch-state.json"
+
 # --- Stage 1.5: VERIFY task phase gate ---
 # If the completed task is a [VERIFY] checkpoint, enforce full quality gate.
 IS_VERIFY=false
@@ -185,7 +188,6 @@ if [ "$IS_VERIFY" = true ]; then
 fi
 
 # --- Stage 2: Supplemental typecheck ---
-DISPATCH_STATE="$SPEC_DIR/.dispatch-state.json"
 TYPECHECK_CMD=$(jq -r '.qualityCommands.typecheck // empty' "$DISPATCH_STATE" 2>/dev/null || true)
 
 if [ -n "$TYPECHECK_CMD" ]; then
@@ -210,7 +212,7 @@ while IFS= read -r fline; do
   fi
   if [ "$IN_TASK" = true ] && echo "$fline" | grep -qE "^\s*- \[.\] [0-9]"; then break; fi
   if [ "$IN_TASK" = true ] && echo "$fline" | grep -qE "\*\*Files\*\*:"; then
-    TASK_FILES=$(echo "$fline" | sed 's/.*\*\*Files\*\*:[[:space:]]*//' | sed 's/`//g' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    TASK_FILES=$(echo "$fline" | sed 's/.*\*\*Files\*\*:[[:space:]]*//' | sed 's/`//g' | sed 's/ *(NEW)//g; s/ *(MODIFY)//g; s/ *(CREATE)//g' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
     break
   fi
 done < "$SPEC_DIR/tasks.md"

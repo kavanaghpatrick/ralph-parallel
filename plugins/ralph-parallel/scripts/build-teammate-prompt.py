@@ -42,7 +42,11 @@ def build_quality_section(quality_commands: dict, baseline_test_count: int = 0) 
         lines.append(f'   If ANY test fails (including pre-existing tests), fix it BEFORE marking done.')
         lines.append(f'   Zero regressions policy: your changes must not break existing tests.')
         step += 1
-    if not tc and not test and not build:
+    lint = quality_commands.get('lint')
+    if lint:
+        lines.append(f'{step}. Lint: `{lint}`')
+        step += 1
+    if not tc and not test and not build and not lint:
         lines.append(f'{step}. Run any available project checks (build, lint, typecheck, test).')
         step += 1
     lines.append('')

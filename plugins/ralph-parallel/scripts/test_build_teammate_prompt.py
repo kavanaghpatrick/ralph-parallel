@@ -56,6 +56,38 @@ class TestBuildQualitySection:
         assert "Run any available project checks" in text
 
 
+class TestLintInQualitySection:
+    def test_lint_appears(self):
+        """lint command should appear in quality section."""
+        lines = build_quality_section({"lint": "eslint ."})
+        text = "\n".join(lines)
+        assert "Lint:" in text
+        assert "eslint ." in text
+
+    def test_lint_after_test(self):
+        """Lint step number must be higher than test step number."""
+        lines = build_quality_section({"test": "pytest", "lint": "ruff"})
+        text = "\n".join(lines)
+        test_line = next(l for l in lines if "Full test suite:" in l)
+        lint_line = next(l for l in lines if "Lint:" in l)
+        test_step = int(test_line.strip()[0])
+        lint_step = int(lint_line.strip()[0])
+        assert lint_step > test_step
+
+    def test_no_lint_no_change(self):
+        """Without lint, no 'Lint:' line should appear."""
+        lines = build_quality_section({"test": "pytest"})
+        text = "\n".join(lines)
+        assert "Lint:" not in text
+
+    def test_lint_only_no_fallback(self):
+        """With only lint, no fallback 'Run any available' line should appear."""
+        lines = build_quality_section({"lint": "ruff"})
+        text = "\n".join(lines)
+        assert "Lint:" in text
+        assert "Run any available" not in text
+
+
 class TestBuildPromptIntegration:
     def test_quality_section_present(self):
         group = _make_group()
