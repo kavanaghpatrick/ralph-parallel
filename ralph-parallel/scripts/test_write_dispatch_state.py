@@ -196,3 +196,12 @@ class TestBuildDispatchState:
         args = _make_args('/tmp/p.json', str(tmp_path))
         state = build_dispatch_state(partition, args)
         assert state['qualityCommands'] == {'build': 'npx tsc', 'test': 'pytest'}
+
+    def test_dispatched_at_iso8601_with_z(self, tmp_path, monkeypatch):
+        monkeypatch.setenv('CLAUDE_SESSION_ID', 'test')
+        partition = _make_partition()
+        args = _make_args('/tmp/p.json', str(tmp_path))
+        state = build_dispatch_state(partition, args)
+        ts = state['dispatchedAt']
+        assert ts.endswith('Z'), f"Expected ISO 8601 ending in Z, got: {ts}"
+        assert '+' not in ts, f"Should not contain +00:00, got: {ts}"
