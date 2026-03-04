@@ -34,9 +34,17 @@ except ModuleNotFoundError:
 
 
 def _task_id_key(task_id: str) -> tuple[int, int]:
-    """Convert 'X.Y' to (X, Y) for correct numeric comparison."""
-    parts = task_id.split('.')
-    return (int(parts[0]), int(parts[1]))
+    """Convert 'X.Y' to (X, Y) for correct numeric comparison.
+
+    Returns (0, 0) for malformed IDs (no crash on bad input).
+    """
+    try:
+        parts = task_id.split('.')
+        major = int(parts[0])
+        minor = int(parts[1]) if len(parts) > 1 else 0
+        return (major, minor)
+    except (ValueError, IndexError):
+        return (0, 0)
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -327,7 +335,22 @@ def parse_predefined_groups(content: str) -> list[dict] | None:
 
 
 def parse_tasks(content: str) -> list[dict]:
-    """Parse tasks.md content into structured task objects."""
+    """Parse tasks.md content into structured task objects.
+
+    Supports two formats:
+    1. Checkbox format: - [ ] X.Y [P] Description (original ralph-specum format)
+    2. Header format:  ### X.Y Description (markdown header format)
+
+    Tries checkbox format first, falls back to header format if no tasks found.
+    """
+    tasks = _parse_tasks_checkbox(content)
+    if not tasks:
+        tasks = _parse_tasks_headers(content)
+    return tasks
+
+
+def _parse_tasks_checkbox(content: str) -> list[dict]:
+    """Parse tasks in checkbox format: - [ ] X.Y [P] Description."""
     tasks = []
     lines = content.split('\n')
     i = 0
@@ -392,6 +415,109 @@ def parse_tasks(content: str) -> list[dict]:
             'markers': markers,
             'phase': phase,
             'completed': completed,
+            'dependencies': [],
+            'rawBlock': raw_block.rstrip(),
+        })
+
+    return tasks
+
+
+def _parse_tasks_headers(content: str) -> list[dict]:
+    """Parse tasks in markdown header format: ### X.Y Description.
+
+    Also extracts group-level Files: lines from ## sections for file ownership.
+    """
+    tasks = []
+    lines = content.split('\n')
+    i = 0
+
+    # First pass: collect group-level Files: lines from ## headers
+    group_files: dict[int, list[str]] = {}
+    current_group = 0
+    for line in lines:
+        gm = re.match(r'^##\s+(\d+)\.\s*(.*)', line)
+        if gm:
+            current_group = int(gm.group(1))
+            continue
+        if current_group and line.startswith('Files:'):
+            file_list = line[len('Files:'):].strip()
+            group_files[current_group] = [
+                f.strip().strip('`') for f in file_list.split(',') if f.strip()
+            ]
+
+    # Second pass: parse ### X.Y task headers
+    while i < len(lines):
+        line = lines[i]
+
+        # Match task header: ### X.Y Description
+        m = re.match(r'^###\s+(\d+\.\d+)\s+(.*)', line)
+        if not m:
+            i += 1
+            continue
+
+        task_id = m.group(1)
+        description = m.group(2).strip()
+        phase = int(task_id.split('.')[0])
+
+        # Collect task body until next ### or ## header
+        i += 1
+        body_lines = []
+        while i < len(lines):
+            if re.match(r'^##[#]?\s+', lines[i]):
+                break
+            body_lines.append(lines[i])
+            i += 1
+
+        body = '\n'.join(body_lines)
+
+        # Extract files from body — look for backtick-quoted paths
+        files = extract_files(body)
+        if not files:
+            # Try to find file paths in backticks throughout the body
+            files = re.findall(r'`(src/[^`]+\.[a-z]+)`', body)
+        if not files:
+            # Fall back to group-level Files: line
+            files = group_files.get(phase, [])
+
+        # Extract steps (numbered lines)
+        do_steps = []
+        for bline in body_lines:
+            sm = re.match(r'^[-*]\s+(.+)', bline.strip())
+            if sm:
+                do_steps.append(sm.group(1))
+
+        # Detect markers from description or body
+        markers = []
+        if 'verify' in description.lower() or 'verification' in description.lower():
+            markers.append('VERIFY')
+        else:
+            markers.append('P')  # Default: parallelizable
+
+        # Check for verify/done-when patterns
+        verify = extract_field(body, 'Verify')
+        if not verify:
+            # Look for "Done when:" pattern
+            dm = re.search(r'Done when:\s*(.+)', body)
+            if dm:
+                verify = dm.group(1).strip().strip('`')
+        commit = extract_field(body, 'Commit')
+        done_when = extract_field(body, 'Done when')
+
+        # Build raw block
+        raw_block = f"### {task_id} {description}\n"
+        raw_block += '\n'.join(body_lines)
+
+        tasks.append({
+            'id': task_id,
+            'description': description,
+            'files': files,
+            'doSteps': do_steps,
+            'verify': verify,
+            'commit': commit,
+            'doneWhen': done_when,
+            'markers': markers,
+            'phase': phase,
+            'completed': False,
             'dependencies': [],
             'rawBlock': raw_block.rstrip(),
         })
