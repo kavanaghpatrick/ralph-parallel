@@ -128,41 +128,36 @@ Do NOT summarize multiple tasks into a single TaskList item. The total number of
 calls must equal the total number of tasks across ALL groups plus verify tasks.
 </mandatory>
 
-```text
 1. TeamCreate: name "$specName-parallel"
 
-2. For EVERY task in EVERY group in the partition JSON, call TaskCreate:
-
-   FOR each group in partition.groups:
-     FOR each task in group.taskDetails:
-       TaskCreate:
-         subject: "{task.id}: {task.description}"
-         description: task.rawBlock
-         activeForm: "Implementing {task.id}"
-
-   ALSO for each verify task in partition.verifyTasks:
-     TaskCreate:
-       subject: "{verifyTask.id}: {verifyTask.description}"
-       description: verifyTask.rawBlock
-       activeForm: "Running {verifyTask.id} verify"
-       blockedBy: [IDs of all same-phase tasks]
-
-   Phase 2+ tasks: set blockedBy to include the preceding phase's verify task ID.
-
-3. Record the TaskList ID → spec task ID mapping for use in Step 6.
+2. Generate task plan:
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/create-task-plan.py \
+  --partition-file /tmp/$specName-partition.json
 ```
 
-**Example**: If partition has 2 groups with 3 tasks each + 2 verify tasks = 8 TaskCreate calls:
+3. Parse the JSON array output. For each entry IN ORDER (index 0, 1, 2, ...):
+   - Call TaskCreate with `subject`, `description`, `activeForm`
+   - For `blockedBy`: translate index references to actual TaskList IDs using the mapping below
+   - Record `index -> TaskList ID` in a mapping
+
+**Index-to-TaskList ID mapping** (worked example):
+
+```text
+Plan output (4 entries):
+  [0] subject: "1.1: Add types"        blockedBy: []      → TaskCreate → TaskList #7
+  [1] subject: "1.2: Add allocator"    blockedBy: []      → TaskCreate → TaskList #8
+  [2] subject: "1.3: [VERIFY] Phase 1" blockedBy: [0, 1]  → translate to [#7, #8] → TaskCreate → TaskList #9
+  [3] subject: "2.1: Error handling"   blockedBy: [2]     → translate to [#9]      → TaskCreate → TaskList #10
+
+Mapping built incrementally:
+  After [0]: {0: "#7"}
+  After [1]: {0: "#7", 1: "#8"}
+  After [2]: {0: "#7", 1: "#8", 2: "#9"}
+  After [3]: {0: "#7", 1: "#8", 2: "#9", 3: "#10"}
 ```
-TaskCreate: "1.1: Add types header"       → TaskList #1
-TaskCreate: "1.2: Implement allocator"     → TaskList #2
-TaskCreate: "1.3: Wire dispatch table"     → TaskList #3
-TaskCreate: "1.4: [VERIFY] Phase 1"        → TaskList #4 (blockedBy: #1, #2, #3)
-TaskCreate: "2.1: Add error handling"      → TaskList #5 (blockedBy: #4)
-TaskCreate: "2.2: Add fallback paths"      → TaskList #6 (blockedBy: #4)
-TaskCreate: "2.3: Integration tests"       → TaskList #7 (blockedBy: #4)
-TaskCreate: "2.4: [VERIFY] Phase 2"        → TaskList #8 (blockedBy: #5, #6, #7)
-```
+
+4. Record the complete index-to-TaskList ID mapping for use in Step 6.
 
 Do NOT create summary tasks like "Phase 2: all remaining work" — each spec task gets its own entry.
 
