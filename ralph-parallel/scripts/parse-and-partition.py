@@ -866,8 +866,12 @@ def _rebalance_groups(groups, file_ownership):
             groups[largest]['ownedFiles'] = remaining_files
             groups[smallest]['tasks'].append(task)
             groups[smallest]['ownedFiles'].update(task_files)
-            for f in task_files:
-                file_ownership[f] = smallest
+            # Rebuild file_ownership from all groups (prevents stale entries)
+            file_ownership.clear()
+            for g_idx, g in enumerate(groups):
+                for t in g['tasks']:
+                    for f in t['files']:
+                        file_ownership[f] = g_idx
             moved = True
             break
         if not moved:
