@@ -58,7 +58,7 @@ class TestDiscoverNode:
             "scripts": {"start": "node server.js"}
         }))
         result = discover_quality_commands(str(tmp_path))
-        assert result["dev"] == "npx node server.js"
+        assert result["dev"] == "node server.js"
 
 
 class TestDiscoverPython:

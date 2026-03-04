@@ -55,6 +55,11 @@ WEAK_PATTERNS = ['grep', 'ls ', 'cat ', 'echo ', 'true', 'test -f', 'wc ']
 STATIC_PATTERNS = ['tsc', 'typecheck', 'lint', 'eslint', 'prettier', 'mypy', 'pyright', 'clippy', 'ruff']
 RUNTIME_PATTERNS = ['build', 'vite', 'webpack', 'test', 'vitest', 'jest', 'pytest', 'cargo test', 'curl', 'serve', 'node ', 'python3 ']
 
+KNOWN_RUNNERS = (
+    'npx ', 'npm ', 'bun ', 'bunx ', 'yarn ', 'pnpm ', 'pnpx ',
+    'node ', 'deno ', 'tsx ', 'ts-node ',
+)
+
 
 def _discover_node(root: Path) -> dict:
     """Discover quality commands from package.json."""
@@ -73,7 +78,7 @@ def _discover_node(root: Path) -> dict:
             for key in keys:
                 if key in scripts:
                     val = scripts[key]
-                    if '&&' not in val and '|' not in val and not val.startswith('npx ') and not val.startswith('npm '):
+                    if '&&' not in val and '|' not in val and not any(val.startswith(r) for r in KNOWN_RUNNERS):
                         val = f"npx {val}"
                     result[slot] = val
                     break
