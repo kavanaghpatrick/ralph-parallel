@@ -121,6 +121,33 @@ EOF
   # No .dispatch-state.json — backward compat test
 }
 
+setup_files_none() {
+  local dir="$1"
+  cat > "$dir/specs/test-spec/tasks.md" <<'EOF'
+- [ ] 1.1 Test task
+  - **Verify**: `true`
+  - **Files**: none
+EOF
+}
+
+setup_files_na_with_note() {
+  local dir="$1"
+  cat > "$dir/specs/test-spec/tasks.md" <<'EOF'
+- [ ] 1.1 Test task
+  - **Verify**: `true`
+  - **Files**: N/A (validation only)
+EOF
+}
+
+setup_files_dash() {
+  local dir="$1"
+  cat > "$dir/specs/test-spec/tasks.md" <<'EOF'
+- [ ] 1.1 Test task
+  - **Verify**: `true`
+  - **Files**: -
+EOF
+}
+
 # ── Run tests ─────────────────────────────────────────────────
 
 run_test "verify output on failure"       2  "QUALITY GATE FAILED"    setup_verify_fail
@@ -130,6 +157,9 @@ run_test "supplemental typecheck fail"    2  "SUPPLEMENTAL CHECK FAILED" setup_t
 run_test "file existence pass"            0  ""                        setup_file_exist_pass
 run_test "file existence fail"            2  "Missing files"           setup_file_exist_fail
 run_test "backward compat (no state)"     0  ""                        setup_no_dispatch_state
+run_test "files sentinel: none"           0  ""                        setup_files_none
+run_test "files sentinel: N/A (note)"     0  ""                        setup_files_na_with_note
+run_test "files sentinel: dash"           0  ""                        setup_files_dash
 
 # ── Summary ───────────────────────────────────────────────────
 
