@@ -190,4 +190,24 @@ if [ "$DISPATCH_ACTIVE" = true ]; then
   fi
 fi
 
+# --- Orphaned team cleanup ---
+# Detect teams for terminal-state dispatches and clean up
+for team_dir in "$HOME/.claude/teams/"*-parallel; do
+  [ -d "$team_dir" ] || continue
+  TEAM_SPEC=$(basename "$team_dir" | sed 's/-parallel$//')
+  ORPHAN_STATE="$GIT_ROOT/specs/$TEAM_SPEC/.dispatch-state.json"
+
+  # No dispatch state for this team — can't determine status, skip
+  [ -f "$ORPHAN_STATE" ] || continue
+
+  ORPHAN_STATUS=$(jq -r '.status // "unknown"' "$ORPHAN_STATE" 2>/dev/null) || continue
+
+  # Only clean up terminal states: aborted and superseded
+  # Do NOT touch: dispatched (active), merged (completed), stale (resumable), merging (in progress)
+  if [ "$ORPHAN_STATUS" = "aborted" ] || [ "$ORPHAN_STATUS" = "superseded" ]; then
+    rm -rf "$team_dir" 2>/dev/null || true
+    echo "ralph-parallel: Cleaned up orphaned team for '$TEAM_SPEC' (status: $ORPHAN_STATUS)"
+  fi
+done
+
 exit 0
