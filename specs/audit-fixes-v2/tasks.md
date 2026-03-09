@@ -1,7 +1,7 @@
 ---
 spec: audit-fixes-v2
 phase: tasks
-total_tasks: 32
+total_tasks: 26
 created: 2026-03-09
 generated: auto
 ---
