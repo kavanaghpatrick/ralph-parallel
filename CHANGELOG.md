@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.2.4] - 2026-03-09
+
+### Security
+- Command sanitizer (`_sanitize_cmd()`) guards all 6 `eval` call sites in `task-completed-gate.sh` and `capture-baseline.sh` — rejects null bytes, command substitution, path traversal
+- `shell=True` replaced with `shlex.split` in `validate-pre-merge.py` subprocess calls
+- `fsync` added before `os.replace` in `write-dispatch-state.py` for crash-safe atomic writes
+- `_sanitize_name()` path validation added to all shell scripts (dispatch-coordinator, session-setup, teammate-idle-gate)
+- Rsync source validation in `session-setup.sh` prevents syncing from non-plugin directories
+
+### Fixed
+- `fcntl.LOCK_EX` file locking on `mark-tasks-complete.py` prevents concurrent write corruption
+- Deep-copy task dependencies in `parse-and-partition.py` prevents cross-group mutation
+- Circular dependency detection via Kahn's algorithm (exit code 4 on cycle)
+- Duplicate task ID detection with warning
+- `grep -oE` calls under `set -e` guarded with `|| true`
+- Word-splitting fix in `teammate-idle-gate.sh` (`while read` replaces `for x in $var`)
+- `max_teammates` bounds validation (1-20) in `write-dispatch-state.py`
+- `typecheck` added to quality command loop in `validate-pre-merge.py`
+- `BASH_SOURCE` fallback with `CLAUDE_PLUGIN_ROOT` in `merge-guard.sh`
+- Pre-merge conflict check reordered before worktree merge step in `merge.md`
+- KeyError guards (`.get()`) across `build-teammate-prompt.py` and `create-task-plan.py`
+- `try/except` wrappers on all Python `main()` functions
+- Consolidated `baselineSnapshot` jq reads to reduce TOCTOU in `task-completed-gate.sh`
+- `merge-guard.sh` and `teammate-idle-gate.sh` documented in SKILL.md hooks table
+- `TaskGet` → `TaskList` corrected in `status.md` allowed-tools
+
+### Added
+- 25 new tests across 5 test files (155 total)
+
 ## [0.2.3] - 2026-03-02
 
 ### Added
