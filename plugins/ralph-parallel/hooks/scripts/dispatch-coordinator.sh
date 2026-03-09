@@ -100,6 +100,19 @@ write_heartbeat() {
     && mv "${state_file}.tmp.$$" "$state_file" 2>/dev/null || true
 }
 
+_sanitize_name() {
+  local name="$1"
+  if [ -z "$name" ]; then
+    echo "ralph-parallel: REJECTED empty name" >&2
+    return 1
+  fi
+  if ! printf '%s' "$name" | grep -qE '^[a-zA-Z0-9][a-zA-Z0-9_-]*$'; then
+    echo "ralph-parallel: REJECTED invalid name: $name" >&2
+    return 1
+  fi
+  printf '%s' "$name"
+}
+
 # --- Parse stdin ---
 # Error path: if jq fails to parse stdin, all fields default to empty/false.
 # Empty CWD falls through to $(pwd) in PROJECT_ROOT. Empty SESSION_ID means
@@ -127,6 +140,7 @@ TEAM_NAME="${CLAUDE_CODE_TEAM_NAME:-}"
 if [ -n "$TEAM_NAME" ]; then
   # Derive spec name from team name
   SPEC_NAME="${TEAM_NAME%-parallel}"
+  SPEC_NAME=$(_sanitize_name "$SPEC_NAME") || exit 0
   SPEC_DIR="$PROJECT_ROOT/specs/$SPEC_NAME"
   DISPATCH_STATE="$SPEC_DIR/.dispatch-state.json"
 else
@@ -145,6 +159,7 @@ else
 
     COORD_SID=$(jq -r '.coordinatorSessionId // empty' "$state_file" 2>/dev/null) || COORD_SID=""
     SCAN_SPEC=$(basename "$(dirname "$state_file")")
+    SCAN_SPEC=$(_sanitize_name "$SCAN_SPEC" 2>/dev/null) || continue
 
     # Explicitly released (coordinatorSessionId: null) — skip, don't block
     if [ -z "$COORD_SID" ]; then
@@ -196,8 +211,9 @@ fi
 # Error path: if jq can't read status, exit 0 (allow stop — can't determine
 # dispatch state, so blocking would be unsafe). If dispatchedAt fails,
 # default to "unknown" which causes block counter mismatch = reset to 0.
-STATUS=$(jq -r '.status // "unknown"' "$DISPATCH_STATE" 2>/dev/null) || exit 0
-DISPATCHED_AT=$(jq -r '.dispatchedAt // "unknown"' "$DISPATCH_STATE" 2>/dev/null) || DISPATCHED_AT="unknown"
+STATE_JSON=$(cat "$DISPATCH_STATE" 2>/dev/null) || exit 0
+STATUS=$(echo "$STATE_JSON" | jq -r '.status // "unknown"') || exit 0
+DISPATCHED_AT=$(echo "$STATE_JSON" | jq -r '.dispatchedAt // "unknown"') || DISPATCHED_AT="unknown"
 
 # --- Block counter file path ---
 COUNTER_FILE="/tmp/ralph-stop-${SPEC_NAME}-${SESSION_ID}"

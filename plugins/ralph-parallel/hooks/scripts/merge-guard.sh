@@ -70,7 +70,7 @@ fi
 
 # Run validate-pre-merge.py
 # Resolve SCRIPT_DIR with fallback for BASH_SOURCE edge cases (sourced scripts, symlinks)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd 2>/dev/null)" || true
+SCRIPT_DIR="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd 2>/dev/null || true)}"
 SCRIPT_DIR="${SCRIPT_DIR:-.}"
 VALIDATE_SCRIPT="$SCRIPT_DIR/scripts/validate-pre-merge.py"
 

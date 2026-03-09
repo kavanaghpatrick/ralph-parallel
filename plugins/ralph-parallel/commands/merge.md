@@ -88,7 +88,26 @@ there's no git merge needed. Instead, verify consistency:
      gc.auto on the next session start
 ```
 
-## Step 4: Worktree Merge
+## Step 4: Pre-Merge Conflict Detection
+
+Before attempting actual merges, use git's merge-tree for dry-run conflict detection.
+
+```text
+Pre-Merge Check (worktree strategy only):
+
+FOR EACH pair of group branches:
+  result=$(git merge-tree --write-tree branch-A branch-B 2>&1)
+
+  If exit code != 0:
+    - Parse conflicting files from output
+    - Record: potentialConflicts[branchA:branchB] = [files]
+    - Display warning before merge begins
+
+This allows the user to see ALL potential conflicts upfront
+rather than discovering them one at a time during merge.
+```
+
+## Step 5: Worktree Merge
 
 When strategy is `worktree`:
 
@@ -126,25 +145,6 @@ Worktree Integration:
    - git worktree remove .worktrees/$groupName
    - git branch -d parallel/$specName/$groupName
    Restore gc: git config gc.auto 1
-```
-
-## Step 5: Pre-Merge Conflict Detection
-
-Before attempting actual merges, use git's merge-tree for dry-run conflict detection.
-
-```text
-Pre-Merge Check (worktree strategy only):
-
-FOR EACH pair of group branches:
-  result=$(git merge-tree --write-tree branch-A branch-B 2>&1)
-
-  If exit code != 0:
-    - Parse conflicting files from output
-    - Record: potentialConflicts[branchA:branchB] = [files]
-    - Display warning before merge begins
-
-This allows the user to see ALL potential conflicts upfront
-rather than discovering them one at a time during merge.
 ```
 
 ## Step 6: Generate Summary

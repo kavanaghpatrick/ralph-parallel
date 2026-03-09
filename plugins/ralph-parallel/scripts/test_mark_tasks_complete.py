@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 
 import pytest
 
@@ -339,3 +340,132 @@ class TestStrictMode:
         assert "- [x] 1.1 First task" in content
         assert "- [x] 1.2 Second task" in content
         assert "- [x] 1.3 Third task" in content
+
+
+class TestConcurrentWriteLocking:
+    """Test case 7: Concurrent writes -- file lock prevents lost updates."""
+
+    def test_concurrent_write_locking(self, tmp_path):
+        """Spawn two threads that mark different tasks complete simultaneously.
+
+        Thread A marks group-a tasks (1.1, 1.2).
+        Thread B marks group-b tasks (2.1, 2.2).
+        Both write to the same tasks.md file.
+        The file lock should serialize the writes so neither update is lost.
+        """
+        tasks_md = (
+            "# Tasks\n"
+            "- [ ] 1.1 First task\n"
+            "- [ ] 1.2 Second task\n"
+            "- [ ] 2.1 Third task\n"
+            "- [ ] 2.2 Fourth task\n"
+        )
+
+        tasks_path = str(tmp_path / "tasks.md")
+        with open(tasks_path, "w") as f:
+            f.write(tasks_md)
+
+        # Create separate dispatch-state files for each thread
+        state_a = {
+            "completedGroups": ["group-a"],
+            "groups": [
+                {"name": "group-a", "tasks": ["1.1", "1.2"]},
+            ],
+        }
+        state_b = {
+            "completedGroups": ["group-b"],
+            "groups": [
+                {"name": "group-b", "tasks": ["2.1", "2.2"]},
+            ],
+        }
+
+        state_a_path = str(tmp_path / "dispatch-state-a.json")
+        state_b_path = str(tmp_path / "dispatch-state-b.json")
+        with open(state_a_path, "w") as f:
+            json.dump(state_a, f)
+        with open(state_b_path, "w") as f:
+            json.dump(state_b, f)
+
+        results = {}
+
+        def run_in_thread(name, state_path):
+            exit_code, output, _ = run_script(state_path, tasks_path)
+            results[name] = (exit_code, output)
+
+        thread_a = threading.Thread(target=run_in_thread, args=("a", state_a_path))
+        thread_b = threading.Thread(target=run_in_thread, args=("b", state_b_path))
+
+        thread_a.start()
+        thread_b.start()
+        thread_a.join(timeout=30)
+        thread_b.join(timeout=30)
+
+        # Both threads should have exited successfully
+        assert results["a"][0] == 0, f"Thread A failed: {results['a']}"
+        assert results["b"][0] == 0, f"Thread B failed: {results['b']}"
+
+        # Read final state of tasks.md
+        with open(tasks_path, "r") as f:
+            final_content = f.read()
+
+        # All four tasks must be marked complete -- no lost updates
+        assert "- [x] 1.1 First task" in final_content
+        assert "- [x] 1.2 Second task" in final_content
+        assert "- [x] 2.1 Third task" in final_content
+        assert "- [x] 2.2 Fourth task" in final_content
+        assert "- [ ]" not in final_content
+
+
+class TestMainErrorHandling:
+    """Test case 8: main() handles missing files without unhandled exceptions."""
+
+    def test_missing_dispatch_state(self, tmp_path):
+        """Missing dispatch-state.json -> exits 0 with error in JSON (graceful)."""
+        tasks_md = "# Tasks\n- [ ] 1.1 First task\n"
+        tasks_path = str(tmp_path / "tasks.md")
+        with open(tasks_path, "w") as f:
+            f.write(tasks_md)
+
+        nonexistent_state = str(tmp_path / "nonexistent-dispatch-state.json")
+
+        exit_code, output, content = run_script(nonexistent_state, tasks_path)
+
+        # Script handles FileNotFoundError gracefully and exits 0
+        assert exit_code == 0
+        assert "error" in output
+        assert output["marked"] == 0
+        # tasks.md should be untouched
+        assert "- [ ] 1.1 First task" in content
+
+    def test_missing_tasks_md(self, tmp_path):
+        """Missing tasks.md -> exits 1 with error message (no unhandled crash)."""
+        dispatch_state = {
+            "completedGroups": ["group-a"],
+            "groups": [
+                {"name": "group-a", "tasks": ["1.1"]},
+            ],
+        }
+        state_path = str(tmp_path / "dispatch-state.json")
+        with open(state_path, "w") as f:
+            json.dump(dispatch_state, f)
+
+        nonexistent_tasks = str(tmp_path / "nonexistent-tasks.md")
+
+        exit_code, output, _ = run_script(state_path, nonexistent_tasks)
+
+        # Script exits 1 (not a crash traceback) with structured error
+        assert exit_code == 1
+        assert "error" in output
+        assert output["marked"] == 0
+
+    def test_both_files_missing(self, tmp_path):
+        """Both files missing -> exits cleanly (dispatch-state error caught first)."""
+        nonexistent_state = str(tmp_path / "no-state.json")
+        nonexistent_tasks = str(tmp_path / "no-tasks.md")
+
+        exit_code, output, _ = run_script(nonexistent_state, nonexistent_tasks)
+
+        # dispatch-state.json FileNotFoundError is caught first -> exit 0
+        assert exit_code == 0
+        assert "error" in output
+        assert output["marked"] == 0

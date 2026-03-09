@@ -135,7 +135,7 @@ def build_prompt(group: dict, spec_name: str, project_root: str, task_ids: list[
             lines.append('KB context could not be parsed. Proceed without prior knowledge.')
             lines.append('')
 
-    name = group['name']
+    name = group.get('name', 'unnamed')
     tasks = group.get('taskDetails', [])
     owned_files = group.get('ownedFiles', [])
     has_multi_phases = group.get('hasMultiplePhases', False)
@@ -160,7 +160,7 @@ def build_prompt(group: dict, spec_name: str, project_root: str, task_ids: list[
     # Task blocks
     for i, task in enumerate(tasks):
         tid = task_ids[i] if i < len(task_ids) else f'#{i + 1}'
-        lines.append(f'### Task {task["id"]}: {task["description"]} (TaskList {tid})')
+        lines.append(f'### Task {task.get("id", "unknown")}: {task.get("description", "")} (TaskList {tid})')
 
         if task.get('files'):
             lines.append(f'- **Files**: {", ".join(f"`{f}`" for f in task["files"])}')
@@ -280,7 +280,7 @@ def main():
 
     # Find the group
     group = None
-    for g in partition['groups']:
+    for g in partition.get('groups', []):
         if g['index'] == args.group_index:
             group = g
             break
@@ -290,7 +290,10 @@ def main():
         sys.exit(1)
 
     task_ids = [t.strip() for t in args.task_ids.split(',')]
-    quality_commands = json.loads(args.quality_commands)
+    try:
+        quality_commands = json.loads(args.quality_commands)
+    except (json.JSONDecodeError, TypeError):
+        quality_commands = {}
 
     prompt = build_prompt(group, args.spec_name, args.project_root, task_ids,
                           quality_commands=quality_commands,
@@ -301,4 +304,8 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)

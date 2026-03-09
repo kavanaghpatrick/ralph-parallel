@@ -9,6 +9,19 @@
 
 set -euo pipefail
 
+_sanitize_name() {
+  local name="$1"
+  if [ -z "$name" ]; then
+    echo "ralph-parallel: REJECTED empty name" >&2
+    return 1
+  fi
+  if ! printf '%s' "$name" | grep -qE '^[a-zA-Z0-9][a-zA-Z0-9_-]*$'; then
+    echo "ralph-parallel: REJECTED invalid name: $name" >&2
+    return 1
+  fi
+  printf '%s' "$name"
+}
+
 # Auto-sync plugin source to cache so new sessions always get latest code
 # CLAUDE_PLUGIN_ROOT = plugin root (e.g. ~/.claude/plugins/cache/.../0.2.0/)
 if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
@@ -17,7 +30,9 @@ if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
   DEV_DIR="$(cd "$DEV_SRC" 2>/dev/null && pwd -P)" || DEV_DIR=""
   # Only sync if dev source exists and differs from cache (avoids self-sync)
   if [ -d "${DEV_SRC:-}" ] && [ -n "$CACHE_DIR" ] && [ "$CACHE_DIR" != "$DEV_DIR" ]; then
-    rsync -a --delete "$DEV_SRC/" "$CACHE_DIR/" 2>/dev/null || true
+    if [ -f "$DEV_SRC/hooks/hooks.json" ] || [ -f "$DEV_SRC/plugin.json" ]; then
+      rsync -a --delete "$DEV_SRC/" "$CACHE_DIR/" 2>/dev/null || true
+    fi
   fi
 fi
 
@@ -29,7 +44,7 @@ SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null) || SESSIO
 # Best-effort: export session_id for dispatch.md to read
 # Works on fresh start, broken on resume (#24775) -- auto-reclaim compensates
 if [ -n "${CLAUDE_ENV_FILE:-}" ] && [ -n "$SESSION_ID" ]; then
-  echo "export CLAUDE_SESSION_ID=$SESSION_ID" >> "$CLAUDE_ENV_FILE" 2>/dev/null || true
+  echo "export CLAUDE_SESSION_ID=\"$SESSION_ID\"" >> "$CLAUDE_ENV_FILE" 2>/dev/null || true
 fi
 
 # Find project root (handles both main repo and worktrees)
@@ -55,6 +70,7 @@ for state_file in "$GIT_ROOT"/specs/*/.dispatch-state.json; do
     if [ "$STATUS" = "dispatched" ] || [ "$STATUS" = "merging" ]; then
       DISPATCH_ACTIVE=true
       ACTIVE_SPEC=$(basename "$(dirname "$state_file")")
+      ACTIVE_SPEC=$(_sanitize_name "$ACTIVE_SPEC" 2>/dev/null) || continue
       break
     fi
   fi
@@ -195,6 +211,7 @@ fi
 for team_dir in "$HOME/.claude/teams/"*-parallel; do
   [ -d "$team_dir" ] || continue
   TEAM_SPEC=$(basename "$team_dir" | sed 's/-parallel$//')
+  TEAM_SPEC=$(_sanitize_name "$TEAM_SPEC" 2>/dev/null) || continue
   ORPHAN_STATE="$GIT_ROOT/specs/$TEAM_SPEC/.dispatch-state.json"
 
   # No dispatch state for this team — can't determine status, skip

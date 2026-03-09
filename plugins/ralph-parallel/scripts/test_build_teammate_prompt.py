@@ -231,3 +231,92 @@ class TestKBContext:
                                    kb_context_json=None)
         assert prompt_without == prompt_none
         assert "Knowledge Base Context" not in prompt_none
+
+
+class TestMissingGroupName:
+    def test_missing_group_name(self):
+        """A group dict with no 'name' key should use fallback, not raise KeyError."""
+        group = _make_group()
+        del group["name"]
+        prompt = build_prompt(group, "test-spec", "/tmp", ["#1"])
+        # build_prompt uses group.get('name', 'unnamed') so fallback should appear
+        assert '"unnamed" teammate' in prompt
+        # Fallback name should also appear in completion message and commit convention
+        assert "Group unnamed complete" in prompt
+        assert "Signed-off-by: unnamed" in prompt
+
+
+class TestTaskMissingFields:
+    def test_task_missing_id_and_description(self):
+        """taskDetails entries missing 'id' and 'description' should use fallbacks."""
+        group = _make_group(taskDetails=[
+            {"files": ["b.ts"], "doSteps": [], "verify": "", "commit": "",
+             "doneWhen": "", "phase": 1},
+        ])
+        prompt = build_prompt(group, "test-spec", "/tmp", ["#1"])
+        # task.get("id", "unknown") should produce "unknown"
+        assert "Task unknown:" in prompt
+        # Prompt should still contain standard sections
+        assert "Your Tasks" in prompt
+        assert "Quality Checks" in prompt
+
+    def test_task_missing_only_id(self):
+        """taskDetails entry missing just 'id' should still include description."""
+        group = _make_group(taskDetails=[
+            {"description": "Implement widget", "files": ["c.ts"], "doSteps": [],
+             "verify": "", "commit": "", "doneWhen": "", "phase": 1},
+        ])
+        prompt = build_prompt(group, "test-spec", "/tmp", ["#1"])
+        assert "Task unknown: Implement widget" in prompt
+
+    def test_task_missing_only_description(self):
+        """taskDetails entry missing just 'description' should not raise KeyError."""
+        group = _make_group(taskDetails=[
+            {"id": "2.1", "files": ["d.ts"], "doSteps": [],
+             "verify": "", "commit": "", "doneWhen": "", "phase": 1},
+        ])
+        prompt = build_prompt(group, "test-spec", "/tmp", ["#1"])
+        assert "Task 2.1:" in prompt
+        assert "Your Tasks" in prompt
+
+
+class TestMalformedQualityCommands:
+    def test_cli_invalid_json_quality_commands(self, tmp_path):
+        """--quality-commands with invalid JSON should not crash; falls back to {}."""
+        partition = {
+            "groups": [{
+                "index": 0, "name": "test", "tasks": ["1.1"],
+                "taskDetails": [{"id": "1.1", "description": "Test", "files": ["a.ts"],
+                                 "doSteps": [], "verify": "", "commit": "", "doneWhen": "",
+                                 "phase": 1}],
+                "ownedFiles": ["a.ts"], "hasMultiplePhases": False, "phases": [1],
+                "dependencies": [],
+            }]
+        }
+        pf = tmp_path / "partition.json"
+        pf.write_text(json.dumps(partition))
+
+        script = os.path.join(os.path.dirname(__file__), "build-teammate-prompt.py")
+        result = subprocess.run(
+            ["python3", script, "--partition-file", str(pf), "--group-index", "0",
+             "--spec-name", "test", "--project-root", "/tmp", "--task-ids", "#1",
+             "--quality-commands", "NOT VALID JSON {{{"],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0
+        # Fallback quality section should have the generic "Run any available" line
+        assert "Run any available project checks" in result.stdout
+
+    def test_build_quality_section_empty_dict(self):
+        """build_quality_section({}) should produce fallback guidance."""
+        lines = build_quality_section({})
+        text = "\n".join(lines)
+        assert "Run any available project checks" in text
+
+    def test_build_prompt_quality_commands_none(self):
+        """build_prompt with quality_commands=None should not crash."""
+        group = _make_group()
+        prompt = build_prompt(group, "test-spec", "/tmp", ["#1"],
+                              quality_commands=None)
+        assert "Quality Checks" in prompt
+        assert "Run any available project checks" in prompt

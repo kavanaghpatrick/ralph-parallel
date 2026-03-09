@@ -193,6 +193,8 @@ Every task completion triggers a quality gate via the `TaskCompleted` hook:
 | `file-ownership-guard.sh` | PreToolUse (Write/Edit) | Block writes outside owned files. Returns error message naming the violation. |
 | `task-completed-gate.sh` | TaskCompleted | 6-stage quality gate. Blocks task completion if any check fails. |
 | `dispatch-coordinator.sh` | Stop | Prevents coordinator from stopping mid-dispatch. Re-injects coordination context after compaction. |
+| `merge-guard.sh` | PreToolUse (Write\|Edit) | Intercepts status="merged" writes, runs validate-pre-merge.py |
+| `teammate-idle-gate.sh` | TeammateIdle | Prevents teammates from going idle with uncompleted tasks, safety valve after N blocks |
 
 ### What Claude Sees From Hooks
 
@@ -243,7 +245,7 @@ Signed-off-by: api-layer
 
 The trailer value is the group name (not git user info). **Do NOT use `git commit -s`** -- it produces the wrong format (user.name + user.email instead of group name). Append the trailer manually.
 
-The `verify-commit-provenance.py` script audits commits against known group names after dispatch.
+The `verify-commit-provenance.py` script audits commits against known group names after dispatch. It is a standalone audit script, not wired into any hooks.
 
 ## Teammate Behavior
 
@@ -348,3 +350,4 @@ Serial tasks: none
 - Use `--dry-run` to preview the partition plan before dispatching
 - Pre-define groups in tasks.md when you want explicit control over partitioning
 - Quality Commands in tasks.md override auto-discovery -- always declare them for monorepos
+- `qualityCommands.dev` is discovered but intentionally not executed by quality gates

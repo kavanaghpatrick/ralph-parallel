@@ -2,6 +2,10 @@
 import importlib.util
 import json
 import os
+import subprocess
+import sys
+from unittest.mock import patch
+
 import pytest
 
 # Load module from hyphenated filename
@@ -72,6 +76,52 @@ class TestAtomicWrite:
         with open(path) as f:
             content = f.read()
         assert content.endswith('\n')
+
+    def test_atomic_write_calls_fsync(self, tmp_path):
+        path = str(tmp_path / 'test.json')
+        with patch('os.fsync') as mock_fsync:
+            _atomic_write(path, {'key': 'value'})
+            mock_fsync.assert_called()
+
+    def test_atomic_write_cleans_up_on_failure(self, tmp_path):
+        path = str(tmp_path / 'test.json')
+        with patch('os.replace', side_effect=OSError('mock replace failure')):
+            with pytest.raises(OSError, match='mock replace failure'):
+                _atomic_write(path, {'key': 'value'})
+        # The temp file should have been cleaned up
+        remaining = [f for f in os.listdir(tmp_path) if f.endswith('.tmp')]
+        assert remaining == [], f"Temp file not cleaned up: {remaining}"
+
+
+class TestMaxTeammatesValidation:
+    """Tests for max_teammates CLI validation."""
+
+    _script = os.path.join(os.path.dirname(__file__), 'write-dispatch-state.py')
+
+    def _run_script(self, max_teammates, tmp_path):
+        """Run the script with a given --max-teammates value."""
+        partition_file = str(tmp_path / 'partition.json')
+        with open(partition_file, 'w') as f:
+            json.dump({'groups': [], 'serialTasks': [], 'verifyTasks': [],
+                        'qualityCommands': {}}, f)
+        spec_dir = str(tmp_path / 'spec')
+        os.makedirs(spec_dir, exist_ok=True)
+        return subprocess.run(
+            [sys.executable, self._script,
+             '--partition-file', partition_file,
+             '--strategy', 'file-ownership',
+             '--max-teammates', str(max_teammates),
+             '--spec-dir', spec_dir],
+            capture_output=True, text=True,
+        )
+
+    def test_max_teammates_below_minimum(self, tmp_path):
+        result = self._run_script(0, tmp_path)
+        assert result.returncode == 1
+
+    def test_max_teammates_above_maximum(self, tmp_path):
+        result = self._run_script(21, tmp_path)
+        assert result.returncode == 1
 
 
 class TestCheckExistingState:

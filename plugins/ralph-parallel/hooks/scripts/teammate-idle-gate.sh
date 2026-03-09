@@ -11,6 +11,19 @@
 
 set -euo pipefail
 
+_sanitize_name() {
+  local name="$1"
+  if [ -z "$name" ]; then
+    echo "ralph-parallel: REJECTED empty name" >&2
+    return 1
+  fi
+  if ! printf '%s' "$name" | grep -qE '^[a-zA-Z0-9][a-zA-Z0-9_-]*$'; then
+    echo "ralph-parallel: REJECTED invalid name: $name" >&2
+    return 1
+  fi
+  printf '%s' "$name"
+}
+
 # --- Counter functions (inlined from dispatch-coordinator.sh pattern) ---
 
 read_block_counter() {
@@ -60,6 +73,7 @@ if [ -z "$TEAM_NAME" ] || [[ "$TEAM_NAME" != *-parallel ]]; then
 fi
 
 SPEC_NAME="${TEAM_NAME%-parallel}"
+SPEC_NAME=$(_sanitize_name "$SPEC_NAME") || exit 0
 PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || PROJECT_ROOT="${CWD:-$(pwd)}"
 SPEC_DIR="$PROJECT_ROOT/specs/$SPEC_NAME"
 DISPATCH_STATE="$SPEC_DIR/.dispatch-state.json"
@@ -74,7 +88,8 @@ STATUS=$(jq -r '.status // "unknown"' "$DISPATCH_STATE" 2>/dev/null) || STATUS="
 DISPATCHED_AT=$(jq -r '.dispatchedAt // "unknown"' "$DISPATCH_STATE" 2>/dev/null) || DISPATCHED_AT="unknown"
 
 MAX_IDLE_BLOCKS="${RALPH_MAX_IDLE_BLOCKS:-5}"
-COUNTER_FILE="/tmp/ralph-idle-${SPEC_NAME}-${TEAMMATE_NAME}"
+TEAMMATE_NAME_SAFE=$(_sanitize_name "$TEAMMATE_NAME" 2>/dev/null) || TEAMMATE_NAME_SAFE="unknown"
+COUNTER_FILE="/tmp/ralph-idle-${SPEC_NAME}-${TEAMMATE_NAME_SAFE}"
 
 # --- completedGroups bypass (authoritative source, checked before tasks.md) ---
 TEAMMATE_GROUP_DONE=$(jq -r --arg name "$TEAMMATE_NAME" \
@@ -103,13 +118,14 @@ if [ ! -f "$TASKS_MD" ]; then
 fi
 
 UNCOMPLETED=""
-for TASK_ID in $GROUP_TASKS; do
+while IFS= read -r TASK_ID; do
+  [ -z "$TASK_ID" ] && continue
   # Check if task line has [ ] (uncompleted) vs [x] (completed)
   if grep -qE "^\s*- \[ \] ${TASK_ID}\b" "$TASKS_MD"; then
     DESC=$(grep -oE "^\s*- \[ \] ${TASK_ID}\s+.*" "$TASKS_MD" | sed "s/.*${TASK_ID}\s*//" | head -1)
     UNCOMPLETED="${UNCOMPLETED}  - ${TASK_ID}: ${DESC}\n"
   fi
-done
+done <<< "$GROUP_TASKS"
 
 if [ -z "$UNCOMPLETED" ]; then
   # All group tasks complete in tasks.md — allow idle

@@ -25,6 +25,9 @@ parse_tasks = mod.parse_tasks
 build_dependency_graph = mod.build_dependency_graph
 partition_tasks = mod.partition_tasks
 _rebalance_groups = mod._rebalance_groups
+_detect_circular_deps = mod._detect_circular_deps
+_build_groups_from_predefined = mod._build_groups_from_predefined
+parse_predefined_groups = mod.parse_predefined_groups
 
 
 # ── Quality Command Discovery ──────────────────────────────────
@@ -164,8 +167,6 @@ class TestClassifyVerifyCommands:
 
 
 # ── Pre-defined Group File Ownership Conflicts ────────────────
-
-parse_predefined_groups = mod.parse_predefined_groups
 
 
 class TestPredefinedGroupFileConflicts:
@@ -508,3 +509,208 @@ class TestRebalanceFileOwnership:
                     expected_ownership[f] = g_idx
 
         assert file_ownership == expected_ownership
+
+
+# ── Circular Dependency Detection ─────────────────────────────
+
+
+class TestCircularDependencyDetection:
+    """Verify _detect_circular_deps returns cycle task IDs."""
+
+    def test_circular_dependency_detection(self):
+        """Task A depends on B and B depends on A — cycle detected."""
+        tasks = [
+            {'id': '1.1', 'dependencies': ['1.2'], 'phase': 1,
+             'files': ['a.ts'], 'markers': ['P'], 'completed': False,
+             'description': 'Task A', 'verify': '', 'rawBlock': ''},
+            {'id': '1.2', 'dependencies': ['1.1'], 'phase': 1,
+             'files': ['b.ts'], 'markers': ['P'], 'completed': False,
+             'description': 'Task B', 'verify': '', 'rawBlock': ''},
+        ]
+        cycle = _detect_circular_deps(tasks)
+        assert set(cycle) == {'1.1', '1.2'}
+
+    def test_no_cycle_returns_empty(self):
+        """Linear dependency chain has no cycle."""
+        tasks = [
+            {'id': '1.1', 'dependencies': [], 'phase': 1,
+             'files': ['a.ts'], 'markers': ['P'], 'completed': False,
+             'description': 'A', 'verify': '', 'rawBlock': ''},
+            {'id': '1.2', 'dependencies': ['1.1'], 'phase': 1,
+             'files': ['b.ts'], 'markers': ['P'], 'completed': False,
+             'description': 'B', 'verify': '', 'rawBlock': ''},
+        ]
+        cycle = _detect_circular_deps(tasks)
+        assert cycle == []
+
+
+# ── Duplicate Task ID Handling ────────────────────────────────
+
+
+class TestDuplicateTaskIds:
+    """Duplicate task IDs: first kept, second skipped with warning."""
+
+    def test_duplicate_task_ids(self, capsys):
+        """Two tasks sharing ID 1.1 — only the first is kept."""
+        tasks_md = (
+            "## Phase 1: Test\n"
+            "- [ ] 1.1 [P] First task\n"
+            "  - **Files**: `a.ts`\n"
+            "  - **Verify**: `echo first`\n"
+            "- [ ] 1.1 [P] Duplicate task\n"
+            "  - **Files**: `b.ts`\n"
+            "  - **Verify**: `echo duplicate`\n"
+            "- [ ] 1.2 [P] Normal task\n"
+            "  - **Files**: `c.ts`\n"
+            "  - **Verify**: `echo normal`\n"
+        )
+        tasks = parse_tasks(tasks_md)
+        # Only one task with ID 1.1 should exist
+        ids = [t['id'] for t in tasks]
+        assert ids.count('1.1') == 1
+        assert len(tasks) == 2  # 1.1 (first) and 1.2
+        # The kept task should be the first one
+        task_11 = [t for t in tasks if t['id'] == '1.1'][0]
+        assert task_11['description'] == 'First task'
+        # Warning emitted on stderr
+        captured = capsys.readouterr()
+        assert "WARNING" in captured.err
+        assert "1.1" in captured.err
+
+
+# ── File Overlap Dependencies ─────────────────────────────────
+
+
+class TestFileOverlapDependencies:
+    """File overlap creates dependency edges via build_dependency_graph."""
+
+    def test_file_overlap_dependencies(self):
+        """Two tasks sharing a file — second depends on first."""
+        tasks_md = (
+            "## Phase 1: Test\n"
+            "- [ ] 1.1 [P] First task\n"
+            "  - **Files**: `shared.ts`, `a.ts`\n"
+            "  - **Verify**: `echo ok`\n"
+            "- [ ] 1.2 [P] Second task\n"
+            "  - **Files**: `shared.ts`, `b.ts`\n"
+            "  - **Verify**: `echo ok`\n"
+            "- [ ] 1.3 [P] Independent task\n"
+            "  - **Files**: `c.ts`\n"
+            "  - **Verify**: `echo ok`\n"
+        )
+        tasks = parse_tasks(tasks_md)
+        tasks = build_dependency_graph(tasks)
+        task_12 = [t for t in tasks if t['id'] == '1.2'][0]
+        task_13 = [t for t in tasks if t['id'] == '1.3'][0]
+        # 1.2 shares shared.ts with 1.1, so 1.2 depends on 1.1
+        assert '1.1' in task_12['dependencies']
+        # 1.3 has no overlap, so no dependencies
+        assert task_13['dependencies'] == []
+
+
+# ── Deep Copy in Predefined Groups ────────────────────────────
+
+
+class TestDeepCopyPredefinedGroups:
+    """_build_groups_from_predefined must not mutate original task dependencies."""
+
+    def test_deep_copy_predefined_groups(self):
+        """Cross-group deps are stripped in groups but originals are untouched."""
+        tasks_md = (
+            "## Phase 1: Setup\n"
+            "\n"
+            "### Group 1: alpha [P]\n"
+            "**Files owned**: `a.ts`\n"
+            "\n"
+            "- [ ] 1.1 [P] Task A\n"
+            "  - **Files**: `a.ts`\n"
+            "  - **Verify**: `echo ok`\n"
+            "\n"
+            "### Group 2: beta [P]\n"
+            "**Files owned**: `b.ts`\n"
+            "\n"
+            "- [ ] 1.2 [P] Task B\n"
+            "  - **Files**: `b.ts`\n"
+            "  - **Verify**: `echo ok`\n"
+        )
+        tasks = parse_tasks(tasks_md)
+        # Manually inject a cross-group dependency: 1.2 depends on 1.1
+        task_12 = [t for t in tasks if t['id'] == '1.2'][0]
+        task_12['dependencies'] = ['1.1']
+
+        # Save the original dependency list reference and content
+        original_deps = task_12['dependencies']
+        original_deps_copy = list(original_deps)
+
+        predefined = parse_predefined_groups(tasks_md)
+        assert predefined is not None
+
+        parallel_tasks = [t for t in tasks if not t['completed']]
+        groups, serial = _build_groups_from_predefined(
+            predefined, tasks, parallel_tasks, max_teammates=4)
+
+        # The original task's dependencies should be unchanged
+        assert task_12['dependencies'] == original_deps_copy
+        assert task_12['dependencies'] is original_deps
+
+        # The group copy of 1.2 should have '1.1' stripped (cross-group)
+        group_beta = [g for g in groups if g.get('predefinedName') == 'beta'][0]
+        group_task_12 = [t for t in group_beta['tasks'] if t['id'] == '1.2'][0]
+        assert '1.1' not in group_task_12['dependencies']
+
+
+# ── Multi-Phase Partitioning ──────────────────────────────────
+
+
+class TestMultiPhasePartitioning:
+    """Multi-phase tasks.md: phases are separated correctly."""
+
+    def test_multi_phase_partitioning(self):
+        """Phase 1 and Phase 2 tasks partition with correct phase separation."""
+        tasks_md = (
+            "## Phase 1: Foundation\n"
+            "- [ ] 1.1 [P] Setup config\n"
+            "  - **Files**: `config.ts`\n"
+            "  - **Verify**: `echo ok`\n"
+            "- [ ] 1.2 [P] Setup utils\n"
+            "  - **Files**: `utils.ts`\n"
+            "  - **Verify**: `echo ok`\n"
+            "- [ ] 1.3 [VERIFY] Verify phase 1\n"
+            "  - **Verify**: `echo verify`\n"
+            "\n"
+            "## Phase 2: Features\n"
+            "- [ ] 2.1 [P] Add feature A\n"
+            "  - **Files**: `featureA.ts`\n"
+            "  - **Verify**: `echo ok`\n"
+            "- [ ] 2.2 [P] Add feature B\n"
+            "  - **Files**: `featureB.ts`\n"
+            "  - **Verify**: `echo ok`\n"
+            "- [ ] 2.3 [VERIFY] Verify phase 2\n"
+            "  - **Verify**: `echo verify`\n"
+        )
+        tasks = parse_tasks(tasks_md)
+        tasks = build_dependency_graph(tasks)
+        result = partition_tasks(tasks, max_teammates=4)
+
+        assert result is not None
+        # Two phases detected
+        assert result['phaseCount'] == 2
+        # Two VERIFY tasks (one per phase)
+        assert len(result['verifyTasks']) == 2
+        verify_phases = sorted(vt['phase'] for vt in result['verifyTasks'])
+        assert verify_phases == [1, 2]
+
+        # Phase 2 tasks depend on phase 1 VERIFY task (1.3)
+        phase2_tasks = [t for t in tasks if t['phase'] == 2]
+        for t in phase2_tasks:
+            assert '1.3' in t['dependencies'], \
+                f"Phase 2 task {t['id']} should depend on VERIFY 1.3"
+
+        # Phase 1 parallel tasks (1.1, 1.2) are in groups
+        all_grouped_ids = set()
+        for g in result['groups']:
+            all_grouped_ids.update(g['tasks'])
+        # At least the phase 1 parallel tasks should be present
+        assert '1.1' in all_grouped_ids or any(
+            t['id'] == '1.1' for t in result.get('serialTasks', [])
+        )
