@@ -1,7 +1,7 @@
 ---
 description: Show parallel dispatch status and team progress
 argument-hint: [spec-name] [--json]
-allowed-tools: [Read, Bash, Glob, Grep, TaskList, TaskGet]
+allowed-tools: [Read, Bash, Glob, Grep, TaskList]
 ---
 
 # Status

@@ -339,3 +339,65 @@ class TestNullAndEmptyQualityCommands:
         assert out["checks"]["qualityTest"]["passed"] is True
         assert out["checks"]["qualityTest"]["skipped"] is False
         assert out["checks"]["qualityLint"]["skipped"] is True
+
+
+def _import_module():
+    """Import validate-pre-merge.py as a module and return it."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "validate_pre_merge", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class TestRunCommandNoShellTrue:
+    """Verify _run_command does not use shell=True in subprocess.run."""
+
+    def test_run_command_no_shell_true(self, tmp_path):
+        """subprocess.run must be called without shell=True."""
+        from unittest.mock import patch, MagicMock
+
+        mod = _import_module()
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            mod._run_command("echo hello", str(tmp_path), timeout=10)
+            mock_run.assert_called_once()
+            call_args = mock_run.call_args
+            # shell=True must not appear in keyword arguments
+            assert call_args.kwargs.get("shell", False) is False
+            # First positional arg should be a list (from shlex.split), not a string
+            assert isinstance(call_args.args[0], list)
+
+
+class TestTypecheckIncludedInQualityLoop:
+    """qualityCommands.typecheck produces a qualityTypecheck entry in output."""
+
+    def test_typecheck_included_in_quality_loop(self, tmp_path):
+        ds = tmp_path / ".dispatch-state.json"
+        tm = tmp_path / "tasks.md"
+        write_dispatch_state(ds, groups=[], completed_groups=[],
+                             quality_commands={"typecheck": "echo type-ok"})
+        write_tasks_md(tm, checked=["1.1"])
+        code, out = run_script(ds, tm)
+        assert code == 0
+        assert "qualityTypecheck" in out["checks"]
+        assert out["checks"]["qualityTypecheck"]["passed"] is True
+        assert out["checks"]["qualityTypecheck"]["skipped"] is False
+        assert out["checks"]["qualityTypecheck"]["command"] == "echo type-ok"
+        assert out["checks"]["qualityTypecheck"]["exitCode"] == 0
+
+
+class TestMalformedCommandHandling:
+    """Commands with syntax errors (e.g. unmatched quotes) should not crash."""
+
+    def test_malformed_command_handling(self, tmp_path):
+        """_run_command with unmatched quotes returns non-zero without raising."""
+        mod = _import_module()
+
+        exit_code, timed_out = mod._run_command("echo 'unclosed", str(tmp_path), timeout=10)
+        assert exit_code != 0
+        assert timed_out is False

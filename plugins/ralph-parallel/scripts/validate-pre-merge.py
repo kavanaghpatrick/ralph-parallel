@@ -21,6 +21,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 
@@ -45,13 +46,17 @@ def _run_command(cmd, cwd, timeout=300):
     """
     try:
         result = subprocess.run(
-            cmd, shell=True, cwd=cwd,
+            shlex.split(cmd), cwd=cwd,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             timeout=timeout
         )
         return result.returncode, False
     except subprocess.TimeoutExpired:
         return -1, True
+    except ValueError:
+        return -1, False
+    except (FileNotFoundError, OSError):
+        return 126, False
 
 
 def main():
@@ -65,86 +70,92 @@ def main():
                         help='Skip quality command checks (build/test/lint)')
     args = parser.parse_args()
 
-    # Handle missing dispatch-state.json
-    if not os.path.isfile(args.dispatch_state):
-        print(json.dumps({"error": f"dispatch-state.json not found: {args.dispatch_state}"}))
-        sys.exit(1)
-
-    # Handle missing tasks.md
-    if not os.path.isfile(args.tasks_md):
-        print(json.dumps({"error": f"tasks.md not found: {args.tasks_md}"}))
-        sys.exit(1)
-
-    # Read dispatch-state.json
     try:
-        with open(args.dispatch_state, 'r') as f:
-            state = json.load(f)
-    except json.JSONDecodeError as e:
-        print(json.dumps({"error": f"Malformed JSON in dispatch-state: {str(e)}"}))
+        # Handle missing dispatch-state.json
+        if not os.path.isfile(args.dispatch_state):
+            print(json.dumps({"error": f"dispatch-state.json not found: {args.dispatch_state}"}))
+            sys.exit(1)
+
+        # Handle missing tasks.md
+        if not os.path.isfile(args.tasks_md):
+            print(json.dumps({"error": f"tasks.md not found: {args.tasks_md}"}))
+            sys.exit(1)
+
+        # Read dispatch-state.json
+        try:
+            with open(args.dispatch_state, 'r') as f:
+                state = json.load(f)
+        except json.JSONDecodeError as e:
+            print(json.dumps({"error": f"Malformed JSON in dispatch-state: {str(e)}"}))
+            sys.exit(1)
+
+        # Read tasks.md
+        with open(args.tasks_md, 'r') as f:
+            tasks_content = f.read()
+
+        checks = {}
+        all_passed = True
+
+        # Check 1: All tasks checked
+        unchecked = re.findall(r'^- \[ \]\s*(\d+\.\d+)', tasks_content, re.MULTILINE)
+        checked = re.findall(r'^- \[x\]\s*(\d+\.\d+)', tasks_content, re.MULTILINE)
+        checks['allTasksChecked'] = {
+            'passed': len(unchecked) == 0,
+            'unchecked': unchecked,
+            'total': len(unchecked) + len(checked),
+            'checked': len(checked),
+        }
+        if unchecked:
+            all_passed = False
+
+        # Check 2: All groups in completedGroups
+        group_names = [g['name'] for g in state.get('groups', [])]
+        completed = state.get('completedGroups', [])
+        missing = [g for g in group_names if g not in completed]
+        checks['allGroupsCompleted'] = {
+            'passed': len(missing) == 0,
+            'missing': missing,
+            'total': len(group_names),
+            'completed': len(completed),
+        }
+        if missing:
+            all_passed = False
+
+        # Checks 3-5: Quality commands (unless --skip-quality-commands)
+        if not args.skip_quality_commands:
+            quality = state.get('qualityCommands', {})
+            project_root = _resolve_project_root(args.dispatch_state)
+            for slot in ['build', 'typecheck', 'test', 'lint']:
+                cmd = quality.get(slot)
+                if cmd and cmd not in ('', 'null', None):
+                    exit_code, timed_out = _run_command(cmd, project_root)
+                    passed = exit_code == 0
+                    check_result = {
+                        'passed': passed,
+                        'command': cmd,
+                        'exitCode': exit_code,
+                        'skipped': False,
+                    }
+                    if timed_out:
+                        check_result['timeout'] = True
+                        check_result['message'] = f'Command timed out after 300s: {cmd}'
+                    checks[f'quality{slot.capitalize()}'] = check_result
+                    if not passed:
+                        all_passed = False
+                else:
+                    checks[f'quality{slot.capitalize()}'] = {
+                        'passed': True,
+                        'skipped': True,
+                    }
+
+        result = {'passed': all_passed, 'checks': checks}
+        print(json.dumps(result, indent=2))
+        sys.exit(0 if all_passed else 1)
+    except SystemExit:
+        raise
+    except Exception as e:
+        print(json.dumps({"error": f"Unexpected error: {str(e)}"}))
         sys.exit(1)
-
-    # Read tasks.md
-    with open(args.tasks_md, 'r') as f:
-        tasks_content = f.read()
-
-    checks = {}
-    all_passed = True
-
-    # Check 1: All tasks checked
-    unchecked = re.findall(r'^- \[ \]\s*(\d+\.\d+)', tasks_content, re.MULTILINE)
-    checked = re.findall(r'^- \[x\]\s*(\d+\.\d+)', tasks_content, re.MULTILINE)
-    checks['allTasksChecked'] = {
-        'passed': len(unchecked) == 0,
-        'unchecked': unchecked,
-        'total': len(unchecked) + len(checked),
-        'checked': len(checked),
-    }
-    if unchecked:
-        all_passed = False
-
-    # Check 2: All groups in completedGroups
-    group_names = [g['name'] for g in state.get('groups', [])]
-    completed = state.get('completedGroups', [])
-    missing = [g for g in group_names if g not in completed]
-    checks['allGroupsCompleted'] = {
-        'passed': len(missing) == 0,
-        'missing': missing,
-        'total': len(group_names),
-        'completed': len(completed),
-    }
-    if missing:
-        all_passed = False
-
-    # Checks 3-5: Quality commands (unless --skip-quality-commands)
-    if not args.skip_quality_commands:
-        quality = state.get('qualityCommands', {})
-        project_root = _resolve_project_root(args.dispatch_state)
-        for slot in ['build', 'test', 'lint']:
-            cmd = quality.get(slot)
-            if cmd and cmd not in ('', 'null', None):
-                exit_code, timed_out = _run_command(cmd, project_root)
-                passed = exit_code == 0
-                check_result = {
-                    'passed': passed,
-                    'command': cmd,
-                    'exitCode': exit_code,
-                    'skipped': False,
-                }
-                if timed_out:
-                    check_result['timeout'] = True
-                    check_result['message'] = f'Command timed out after 300s: {cmd}'
-                checks[f'quality{slot.capitalize()}'] = check_result
-                if not passed:
-                    all_passed = False
-            else:
-                checks[f'quality{slot.capitalize()}'] = {
-                    'passed': True,
-                    'skipped': True,
-                }
-
-    result = {'passed': all_passed, 'checks': checks}
-    print(json.dumps(result, indent=2))
-    sys.exit(0 if all_passed else 1)
 
 
 if __name__ == '__main__':

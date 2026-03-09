@@ -14,6 +14,26 @@
 
 set -euo pipefail
 
+_sanitize_cmd() {
+  local cmd="$1"
+  # Reject null bytes
+  if printf '%s' "$cmd" | grep -qP '\x00' 2>/dev/null; then
+    echo "ralph-parallel: REJECTED command (null bytes): $cmd" >&2
+    return 1
+  fi
+  # Reject command substitution attempts
+  if printf '%s' "$cmd" | grep -qE '\$\(|`' 2>/dev/null; then
+    echo "ralph-parallel: REJECTED command (substitution): $cmd" >&2
+    return 1
+  fi
+  # Reject path traversal
+  if printf '%s' "$cmd" | grep -qF '..' 2>/dev/null; then
+    echo "ralph-parallel: REJECTED command (path traversal): $cmd" >&2
+    return 1
+  fi
+  return 0
+}
+
 # Read input from stdin
 INPUT=$(cat)
 
@@ -74,7 +94,7 @@ fi
 COMPLETED_SPEC_TASK=""
 
 if [ -n "$TASK_SUBJECT" ]; then
-  COMPLETED_SPEC_TASK=$(echo "$TASK_SUBJECT" | grep -oE '^[0-9]+\.[0-9]+')
+  COMPLETED_SPEC_TASK=$(echo "$TASK_SUBJECT" | grep -oE '^[0-9]+\.[0-9]+' || true)
 fi
 
 if [ -z "$COMPLETED_SPEC_TASK" ]; then
@@ -110,6 +130,7 @@ fi
 # --- Stage 1: Verify command with output capture ---
 echo "ralph-parallel: Verifying task $COMPLETED_SPEC_TASK: $VERIFY_CMD" >&2
 
+_sanitize_cmd "$VERIFY_CMD" || { echo "ralph-parallel: Command rejected by sanitizer: $VERIFY_CMD" >&2; exit 2; }
 VERIFY_OUTPUT=$(cd "$PROJECT_ROOT" && eval "$VERIFY_CMD" 2>&1) && VERIFY_EXIT=0 || VERIFY_EXIT=$?
 if [ $VERIFY_EXIT -ne 0 ]; then
   echo "QUALITY GATE FAILED for task $COMPLETED_SPEC_TASK ($TASK_SUBJECT)" >&2
@@ -140,7 +161,7 @@ if [ "$IS_VERIFY" = true ]; then
   TASK_PHASE=$(echo "$COMPLETED_SPEC_TASK" | cut -d. -f1)
   UNCHECKED_PRECEDING=""
   while IFS= read -r pline; do
-    PTID=$(echo "$pline" | grep -oE '^\s*- \[ \] [0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+')
+    PTID=$(echo "$pline" | grep -oE '^\s*- \[ \] [0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+' || true)
     if [ -n "$PTID" ]; then
       PPHASE=$(echo "$PTID" | cut -d. -f1)
       if [ "$PPHASE" = "$TASK_PHASE" ]; then
@@ -170,6 +191,7 @@ if [ "$IS_VERIFY" = true ]; then
     if [ "$SLOT_CMD" = "null" ]; then SLOT_CMD=""; fi
     if [ -n "$SLOT_CMD" ]; then
       echo "ralph-parallel: VERIFY phase gate — running $SLOT: $SLOT_CMD" >&2
+      _sanitize_cmd "$SLOT_CMD" || { echo "ralph-parallel: Command rejected by sanitizer: $SLOT_CMD" >&2; exit 2; }
       SLOT_OUTPUT=$(cd "$PROJECT_ROOT" && eval "$SLOT_CMD" 2>&1) && SLOT_EXIT=0 || SLOT_EXIT=$?
       if [ $SLOT_EXIT -ne 0 ]; then
         echo "VERIFY PHASE GATE FAILED: $SLOT command failed (exit $SLOT_EXIT)" >&2
@@ -192,6 +214,7 @@ TYPECHECK_CMD=$(jq -r '.qualityCommands.typecheck // empty' "$DISPATCH_STATE" 2>
 
 if [ -n "$TYPECHECK_CMD" ]; then
   echo "ralph-parallel: Running supplemental typecheck: $TYPECHECK_CMD" >&2
+  _sanitize_cmd "$TYPECHECK_CMD" || { echo "ralph-parallel: Command rejected by sanitizer: $TYPECHECK_CMD" >&2; exit 2; }
   TC_OUTPUT=$(cd "$PROJECT_ROOT" && eval "$TYPECHECK_CMD" 2>&1) && TC_EXIT=0 || TC_EXIT=$?
   if [ $TC_EXIT -ne 0 ]; then
     echo "SUPPLEMENTAL CHECK FAILED: typecheck" >&2
@@ -250,6 +273,7 @@ if [ -n "$BUILD_CMD" ]; then
 
   if [ $((COMPLETED_COUNT % BUILD_INTERVAL)) -eq 0 ] || [ "$COMPLETED_COUNT" -le 1 ]; then
     echo "ralph-parallel: Running periodic build check ($COMPLETED_COUNT tasks done): $BUILD_CMD" >&2
+    _sanitize_cmd "$BUILD_CMD" || { echo "ralph-parallel: Command rejected by sanitizer: $BUILD_CMD" >&2; exit 2; }
     BUILD_OUTPUT=$(cd "$PROJECT_ROOT" && eval "$BUILD_CMD" 2>&1) && BUILD_EXIT=0 || BUILD_EXIT=$?
     if [ $BUILD_EXIT -ne 0 ]; then
       echo "SUPPLEMENTAL CHECK FAILED: build (periodic, every ${BUILD_INTERVAL} tasks)" >&2
@@ -294,8 +318,9 @@ parse_test_count() {
 }
 
 TEST_CMD=$(jq -r '.qualityCommands.test // empty' "$DISPATCH_STATE" 2>/dev/null || true)
-BASELINE_HARD_FAIL=$(jq -r '.baselineSnapshot.hardFail // false' "$DISPATCH_STATE" 2>/dev/null || true)
-BASELINE_EXIT_CODE=$(jq -r '.baselineSnapshot.exitCode // empty' "$DISPATCH_STATE" 2>/dev/null || true)
+BASELINE_JSON=$(jq -r '.baselineSnapshot // {}' "$DISPATCH_STATE" 2>/dev/null || true)
+BASELINE_HARD_FAIL=$(echo "$BASELINE_JSON" | jq -r '.hardFail // false' 2>/dev/null || true)
+BASELINE_EXIT_CODE=$(echo "$BASELINE_JSON" | jq -r '.exitCode // empty' 2>/dev/null || true)
 if [ "$BASELINE_HARD_FAIL" = "null" ]; then BASELINE_HARD_FAIL="false"; fi
 TEST_INTERVAL=${TEST_INTERVAL:-2}
 
@@ -307,10 +332,11 @@ if [ -n "$TEST_CMD" ]; then
 
   if [ $((COMPLETED_COUNT % TEST_INTERVAL)) -eq 0 ] || [ "$COMPLETED_COUNT" -le 1 ]; then
     echo "ralph-parallel: Running test suite regression check ($COMPLETED_COUNT tasks done): $TEST_CMD" >&2
+    _sanitize_cmd "$TEST_CMD" || { echo "ralph-parallel: Command rejected by sanitizer: $TEST_CMD" >&2; exit 2; }
     TEST_OUTPUT=$(cd "$PROJECT_ROOT" && eval "$TEST_CMD" 2>&1) && TEST_EXIT=0 || TEST_EXIT=$?
 
     # --- Baseline comparison: detect test count regression ---
-    BASELINE_COUNT=$(jq -r '.baselineSnapshot.testCount // empty' "$DISPATCH_STATE" 2>/dev/null || true)
+    BASELINE_COUNT=$(echo "$BASELINE_JSON" | jq -r '.testCount // empty' 2>/dev/null || true)
     # Guard against jq returning literal "null" string
     if [ "$BASELINE_COUNT" = "null" ] || [ "$BASELINE_COUNT" = "" ]; then
       BASELINE_COUNT=""
@@ -381,6 +407,7 @@ if [ -n "$LINT_CMD" ]; then
 
   if [ $((COMPLETED_COUNT % LINT_INTERVAL)) -eq 0 ] || [ "$COMPLETED_COUNT" -le 1 ]; then
     echo "ralph-parallel: Running periodic lint check ($COMPLETED_COUNT tasks done): $LINT_CMD" >&2
+    _sanitize_cmd "$LINT_CMD" || { echo "ralph-parallel: Command rejected by sanitizer: $LINT_CMD" >&2; exit 2; }
     LINT_OUTPUT=$(cd "$PROJECT_ROOT" && eval "$LINT_CMD" 2>&1) && LINT_EXIT=0 || LINT_EXIT=$?
     if [ $LINT_EXIT -ne 0 ]; then
       echo "SUPPLEMENTAL CHECK FAILED: lint (periodic, every ${LINT_INTERVAL} tasks)" >&2

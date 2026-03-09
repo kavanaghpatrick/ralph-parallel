@@ -33,7 +33,7 @@ def create_task_plan(partition: dict) -> list[dict]:
     # Map: spec_task_id -> index in plan array
     id_to_index = {}
 
-    groups = partition['groups']
+    groups = partition.get('groups', [])
     verify_tasks = partition.get('verifyTasks', [])
     serial_tasks = partition.get('serialTasks', [])
 
@@ -129,4 +129,8 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)

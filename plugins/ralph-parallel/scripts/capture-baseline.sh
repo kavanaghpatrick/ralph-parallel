@@ -16,6 +16,23 @@
 
 set -euo pipefail
 
+_sanitize_cmd() {
+  local cmd="$1"
+  if printf '%s' "$cmd" | grep -qP '\x00' 2>/dev/null; then
+    echo "ralph-parallel: REJECTED command (null bytes): $cmd" >&2
+    return 1
+  fi
+  if printf '%s' "$cmd" | grep -qE '\$\(|`' 2>/dev/null; then
+    echo "ralph-parallel: REJECTED command (substitution): $cmd" >&2
+    return 1
+  fi
+  if printf '%s' "$cmd" | grep -qF '..' 2>/dev/null; then
+    echo "ralph-parallel: REJECTED command (path traversal): $cmd" >&2
+    return 1
+  fi
+  return 0
+}
+
 # ── Argument parsing ─────────────────────────────────────────
 
 DISPATCH_STATE=""
@@ -81,6 +98,14 @@ echo "ralph-parallel: Running test command: $TEST_CMD" >&2
 # ── Run the test command ──────────────────────────────────────
 
 cd "$PROJECT_ROOT"
+if ! _sanitize_cmd "$TEST_CMD"; then
+  RESULT='{"testCount": -1, "reason": "command_rejected"}'
+  echo "$RESULT"
+  TMPFILE=$(mktemp "${DISPATCH_STATE}.XXXXXX")
+  jq --argjson snap "$RESULT" '.baselineSnapshot = $snap' "$DISPATCH_STATE" > "$TMPFILE" \
+    && mv "$TMPFILE" "$DISPATCH_STATE" || rm -f "$TMPFILE"
+  exit 0
+fi
 TEST_OUTPUT=$(eval "$TEST_CMD" 2>&1) && TEST_EXIT=0 || TEST_EXIT=$?
 TEST_OUTPUT=$(printf '%s' "$TEST_OUTPUT" | sed $'s/\x1b\\[[0-9;]*m//g')
 

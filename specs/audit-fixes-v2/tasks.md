@@ -12,7 +12,7 @@ generated: auto
 
 Focus: Fix all critical and high findings. Accept minimal test coverage for now.
 
-- [ ] 1.1 Add command sanitizer and fix eval in task-completed-gate.sh (C1, H1, H8)
+- [x] 1.1 Add command sanitizer and fix eval in task-completed-gate.sh (C1, H1, H8)
   - **Do**:
     1. Add `_sanitize_cmd()` function near top of script that rejects commands containing null bytes, unquoted backticks, or `..` path traversal sequences. Function should log rejected commands to stderr and return 1 on rejection.
     2. Wrap all 6 `eval` calls (lines ~100, 113, 173, 195, 253, 310, 384) with `_sanitize_cmd` check: `_sanitize_cmd "$CMD" || { echo "Command rejected by sanitizer" >&2; exit 2; }`
@@ -25,7 +25,7 @@ Focus: Fix all critical and high findings. Accept minimal test coverage for now.
   - _Requirements: FR-1, FR-4_
   - _Design: Component A_
 
-- [ ] 1.2 Add command sanitizer to capture-baseline.sh (C2)
+- [x] 1.2 Add command sanitizer to capture-baseline.sh (C2)
   - **Do**:
     1. Add the same `_sanitize_cmd()` function from task 1.1
     2. Guard the `eval "$TEST_CMD"` call on line 84 with `_sanitize_cmd "$TEST_CMD"` check
@@ -37,7 +37,7 @@ Focus: Fix all critical and high findings. Accept minimal test coverage for now.
   - _Requirements: FR-1_
   - _Design: Component A_
 
-- [ ] 1.3 Remove shell=True and add typecheck to validate-pre-merge.py (C3, M)
+- [x] 1.3 Remove shell=True and add typecheck to validate-pre-merge.py (C3, M)
   - **Do**:
     1. Import `shlex` at top
     2. In `_run_command()`, replace `subprocess.run(cmd, shell=True, ...)` with `subprocess.run(shlex.split(cmd), ...)`. Add try/except for `ValueError` from shlex.split (malformed commands).
@@ -50,7 +50,7 @@ Focus: Fix all critical and high findings. Accept minimal test coverage for now.
   - _Requirements: FR-2, FR-19_
   - _Design: Component D_
 
-- [ ] 1.4 Add fsync to write-dispatch-state.py and validate max_teammates (C4, M)
+- [x] 1.4 Add fsync to write-dispatch-state.py and validate max_teammates (C4, M)
   - **Do**:
     1. In `_atomic_write()`, add `f.flush()` and `os.fsync(f.fileno())` between `f.write('\n')` and `tmp_path = f.name` (before the `with` block exits)
     2. Add a `try/finally` to clean up tmp_path on failure: wrap `os.replace` in try, add `finally: if os.path.exists(tmp_path): os.unlink(tmp_path)` -- actually better: wrap in try/except, unlink in except, re-raise
@@ -63,7 +63,7 @@ Focus: Fix all critical and high findings. Accept minimal test coverage for now.
   - _Requirements: FR-3, FR-20_
   - _Design: Component C_
 
-- [ ] 1.5 Add file locking and path sanitization to dispatch-coordinator.sh (H2, H3, H8, H9)
+- [x] 1.5 Add file locking and path sanitization to dispatch-coordinator.sh (H2, H3, H8, H9)
   - **Do**:
     1. Add `_sanitize_name()` function that rejects names containing `..`, `/`, `\`, control chars, or starting with `-` or `.`. Pattern: `^[a-zA-Z0-9_-]+$`
     2. After deriving SPEC_NAME from TEAM_NAME (line 129), run `SPEC_NAME=$(_sanitize_name "$SPEC_NAME") || exit 0`
@@ -79,7 +79,7 @@ Focus: Fix all critical and high findings. Accept minimal test coverage for now.
   - _Requirements: FR-5, FR-6, FR-11, FR-12_
   - _Design: Component B, Component E_
 
-- [ ] 1.6 Fix session-setup.sh: locking, reclaim race, rsync guard, quoting (H2, H5, H9, H10, M)
+- [x] 1.6 Fix session-setup.sh: locking, reclaim race, rsync guard, quoting (H2, H5, H9, H10, M)
   - **Do**:
     1. Add `_sanitize_name()` function (same as 1.5)
     2. Guard rsync (lines 15-21): Add validation that `$DEV_SRC` is inside the git repo and `$CACHE_DIR` is under `~/.claude/plugins/cache/`. Add `[ -d "$DEV_SRC/.git" ] || [ -f "$DEV_SRC/hooks.json" ]` check before rsync to verify it's a real plugin source.
@@ -96,7 +96,7 @@ Focus: Fix all critical and high findings. Accept minimal test coverage for now.
   - _Requirements: FR-5, FR-8, FR-12, FR-13, FR-18_
   - _Design: Component B, Component E_
 
-- [ ] 1.7 Fix teammate-idle-gate.sh: mktemp, path sanitize, quoting (H8, H9, M)
+- [x] 1.7 Fix teammate-idle-gate.sh: mktemp, path sanitize, quoting (H8, H9, M)
   - **Do**:
     1. Add `_sanitize_name()` function (same as 1.5)
     2. Sanitize SPEC_NAME after derivation (line 62): `SPEC_NAME=$(_sanitize_name "$SPEC_NAME") || exit 0`
@@ -109,7 +109,7 @@ Focus: Fix all critical and high findings. Accept minimal test coverage for now.
   - _Requirements: FR-11, FR-12, FR-18_
   - _Design: Component E_
 
-- [ ] 1.8 Fix parse-and-partition.py: deep-copy deps, circular detection, duplicates (H6, H7, M)
+- [x] 1.8 Fix parse-and-partition.py: deep-copy deps, circular detection, duplicates (H6, H7, M)
   - **Do**:
     1. Fix H6: In `_build_groups_from_predefined()` (around line 730), deep-copy task dependencies before mutation: `task = {**task_map[tid], 'dependencies': list(task_map[tid]['dependencies'])}` instead of mutating in-place
     2. Fix H7: Add `_detect_circular_deps(tasks)` function using Kahn's algorithm (topological sort). Build adjacency list from task dependencies. If not all nodes processed, find and report cycle. Call from `main()` after parsing, before partitioning. Exit with code 4 if cycle detected.
@@ -123,7 +123,7 @@ Focus: Fix all critical and high findings. Accept minimal test coverage for now.
   - _Requirements: FR-9, FR-10, FR-21_
   - _Design: Component F_
 
-- [ ] 1.9 Add file locking to mark-tasks-complete.py (H4)
+- [x] 1.9 Add file locking to mark-tasks-complete.py (H4)
   - **Do**:
     1. Import `fcntl` (for file locking)
     2. Before reading tasks.md (line 90), acquire exclusive lock on tasks.md using `fcntl.flock(f, fcntl.LOCK_EX)`. Use a `with` block to ensure lock release.
@@ -137,7 +137,7 @@ Focus: Fix all critical and high findings. Accept minimal test coverage for now.
   - _Requirements: FR-7_
   - _Design: Component B_
 
-- [ ] 1.10 Fix merge.md step ordering and SKILL.md documentation (H11, H12)
+- [x] 1.10 Fix merge.md step ordering and SKILL.md documentation (H11, H12)
   - **Do**:
     1. In merge.md: Move "Step 5: Pre-Merge Conflict Detection" to appear BEFORE "Step 4: Worktree Merge". Renumber: current Step 4 becomes Step 5, current Step 5 becomes Step 4. Current Step 6 becomes Step 6 (unchanged).
     2. In SKILL.md hooks table: Add `merge-guard.sh` row: `| merge-guard.sh | PreToolUse (Write/Edit) | Intercepts status="merged" writes, runs validate-pre-merge.py |`
@@ -149,7 +149,7 @@ Focus: Fix all critical and high findings. Accept minimal test coverage for now.
   - _Requirements: FR-14, FR-15_
   - _Design: N/A_
 
-- [ ] 1.11 Fix merge-guard.sh BASH_SOURCE inconsistency (M)
+- [x] 1.11 Fix merge-guard.sh BASH_SOURCE inconsistency (M)
   - **Do**:
     1. Line 73: `SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd 2>/dev/null)" || true` -- this navigates from hooks/scripts/ up two levels to plugin root. Verify this is correct.
     2. Add fallback: if BASH_SOURCE is empty (sourced context), use `CLAUDE_PLUGIN_ROOT` env var: `SCRIPT_DIR="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd 2>/dev/null)}"`
@@ -160,7 +160,7 @@ Focus: Fix all critical and high findings. Accept minimal test coverage for now.
   - **Commit**: `fix(hooks): fix BASH_SOURCE fallback in merge-guard.sh`
   - _Requirements: FR-18_
 
-- [ ] 1.12 [VERIFY] Phase 1 checkpoint -- all critical and high fixes applied
+- [x] 1.12 [VERIFY] Phase 1 checkpoint -- all critical and high fixes applied
   - **Do**: Verify all critical and high findings have been addressed
   - **Done when**: All C1-C4 and H1-H12 changes committed. No regressions.
   - **Verify**: `grep -r 'eval ' plugins/ralph-parallel/hooks/scripts/task-completed-gate.sh plugins/ralph-parallel/scripts/capture-baseline.sh | grep -v '_sanitize_cmd\|#\|function' | wc -l` returns 0 unguarded evals. `grep -c 'shell=True' plugins/ralph-parallel/scripts/validate-pre-merge.py` returns 0. `grep -c 'fsync' plugins/ralph-parallel/scripts/write-dispatch-state.py` returns 1+.
@@ -170,7 +170,7 @@ Focus: Fix all critical and high findings. Accept minimal test coverage for now.
 
 After critical/high fixes verified, apply medium-priority fixes.
 
-- [ ] 2.1 Fix Python KeyError guards in create-task-plan.py and build-teammate-prompt.py (M)
+- [x] 2.1 Fix Python KeyError guards in create-task-plan.py and build-teammate-prompt.py (M)
   - **Do**:
     1. In create-task-plan.py line 36: Change `partition['groups']` to `partition.get('groups', [])` (already done for verifyTasks and serialTasks -- just groups is unguarded)
     2. In build-teammate-prompt.py line 283: Change `partition['groups']` to `partition.get('groups', [])` in main()
@@ -184,7 +184,7 @@ After critical/high fixes verified, apply medium-priority fixes.
   - **Commit**: `fix(scripts): add KeyError guards to create-task-plan.py, build-teammate-prompt.py`
   - _Requirements: FR-16, FR-17_
 
-- [ ] 2.2 Fix remaining documentation issues (M-docs)
+- [x] 2.2 Fix remaining documentation issues (M-docs)
   - **Do**:
     1. In dispatch.md: Check `allowed-tools` header -- verify it lists `TaskCreate` (not just `Task`). Current line 4 shows `Task` -- confirm if this means TaskCreate or is a different tool name. If the platform tool is called `Task`, leave it. If audit says it should be `TaskCreate`, update.
     2. In SKILL.md: Add note that `verify-commit-provenance.py` exists but is not wired into any hook -- it's a standalone audit script run manually post-dispatch
@@ -197,7 +197,7 @@ After critical/high fixes verified, apply medium-priority fixes.
   - **Commit**: `fix(docs): correct documentation inaccuracies (M-docs)`
   - _Requirements: FR-22_
 
-- [ ] 2.3 Fix shell counter file race conditions and temp file leaks (M-shell, M-python)
+- [x] 2.3 Fix shell counter file race conditions and temp file leaks (M-shell, M-python)
   - **Do**:
     1. In dispatch-coordinator.sh and teammate-idle-gate.sh: The counter files use `echo > file` which is not atomic. Replace with: write to tmpfile then mv, same pattern as dispatch-state.
     2. In write-dispatch-state.py `_atomic_write`: Add try/except around the `os.replace` call. In except block, clean up tmp_path with `os.unlink(tmp_path)` before re-raising.
@@ -208,7 +208,7 @@ After critical/high fixes verified, apply medium-priority fixes.
   - **Commit**: `fix(scripts): fix counter race conditions and temp file leaks`
   - _Requirements: FR-11_
 
-- [ ] 2.4 Fix completedGroups name-matching and baselineSnapshot schema (M-integration)
+- [x] 2.4 Fix completedGroups name-matching and baselineSnapshot schema (M-integration)
   - **Do**:
     1. In task-completed-gate.sh and validate-pre-merge.py: completedGroups stores group names, but matching against group['name'] assumes exact string match. Add a note/comment that names are authoritative strings from dispatch-state.json, not derived.
     2. In task-completed-gate.sh: The baselineSnapshot access uses separate jq calls for `.baselineSnapshot.hardFail`, `.baselineSnapshot.exitCode`, `.baselineSnapshot.testCount` (lines 297-298, 313). Combine into single jq call to prevent TOCTOU.
@@ -219,7 +219,7 @@ After critical/high fixes verified, apply medium-priority fixes.
   - **Commit**: `fix(hooks): consolidate baselineSnapshot reads, document schema`
   - _Requirements: FR-6_
 
-- [ ] 2.5 [VERIFY] Phase 2 checkpoint -- all medium fixes applied
+- [x] 2.5 [VERIFY] Phase 2 checkpoint -- all medium fixes applied
   - **Do**: Verify all medium findings addressed
   - **Done when**: All medium fixes committed. Documentation accurate.
   - **Verify**: Run all existing Python tests: `cd plugins/ralph-parallel && python3 -m pytest scripts/test_*.py -v 2>&1 | tail -20`. All should pass.
@@ -227,7 +227,7 @@ After critical/high fixes verified, apply medium-priority fixes.
 
 ## Phase 3: Testing
 
-- [ ] 3.1 Add tests for parse-and-partition.py: circular deps, duplicates, _parse_tasks_headers (H7, M)
+- [x] 3.1 Add tests for parse-and-partition.py: circular deps, duplicates, _parse_tasks_headers (H7, M)
   - **Do**:
     1. In test_parse_and_partition.py: Add test `test_circular_dependency_detection` -- create tasks.md where task A depends on B and B depends on A. Verify exit code 4.
     2. Add test `test_duplicate_task_ids` -- tasks.md with two `1.1` entries. Verify warning logged and second is skipped.
@@ -240,7 +240,7 @@ After critical/high fixes verified, apply medium-priority fixes.
   - **Commit**: `test(scripts): add parse-and-partition edge case tests`
   - _Requirements: AC-7.1, AC-7.4_
 
-- [ ] 3.2 Add tests for write-dispatch-state.py: fsync verification (C4)
+- [x] 3.2 Add tests for write-dispatch-state.py: fsync verification (C4)
   - **Do**:
     1. In test_write_dispatch_state.py: Add test `test_atomic_write_calls_fsync` -- mock `os.fsync` and verify it's called during `_atomic_write`.
     2. Add test `test_atomic_write_cleans_up_on_failure` -- mock `os.replace` to raise, verify temp file is cleaned up.
@@ -251,7 +251,7 @@ After critical/high fixes verified, apply medium-priority fixes.
   - **Commit**: `test(scripts): add write-dispatch-state fsync and bounds tests`
   - _Requirements: AC-2.1_
 
-- [ ] 3.3 Add tests for validate-pre-merge.py: no shell=True, typecheck (C3)
+- [x] 3.3 Add tests for validate-pre-merge.py: no shell=True, typecheck (C3)
   - **Do**:
     1. In test_validate_pre_merge.py: Add test `test_run_command_no_shell_true` -- verify `_run_command` uses `shlex.split` not `shell=True`. Mock subprocess.run and check the call args.
     2. Add test `test_typecheck_included_in_quality_loop` -- create dispatch-state with `qualityCommands.typecheck` set. Run validation. Verify typecheck command is executed.
@@ -262,7 +262,7 @@ After critical/high fixes verified, apply medium-priority fixes.
   - **Commit**: `test(scripts): add validate-pre-merge security and typecheck tests`
   - _Requirements: AC-1.3_
 
-- [ ] 3.4 Add tests for build-teammate-prompt.py: KeyError, malformed input (M)
+- [x] 3.4 Add tests for build-teammate-prompt.py: KeyError, malformed input (M)
   - **Do**:
     1. In test_build_teammate_prompt.py: Add test `test_missing_group_keys` -- partition JSON with groups missing 'name' or 'taskDetails'. Verify no KeyError.
     2. Add test `test_malformed_quality_commands_json` -- pass invalid JSON string to --quality-commands. Verify graceful fallback.
@@ -273,7 +273,7 @@ After critical/high fixes verified, apply medium-priority fixes.
   - **Commit**: `test(scripts): add build-teammate-prompt resilience tests`
   - _Requirements: AC-4.1_
 
-- [ ] 3.5 Add tests for mark-tasks-complete.py: concurrent access (H4)
+- [x] 3.5 Add tests for mark-tasks-complete.py: concurrent access (H4)
   - **Do**:
     1. In test_mark_tasks_complete.py: Add test `test_concurrent_write_locking` -- spawn two threads that both try to mark different tasks complete simultaneously. Verify both succeed without corruption.
     2. Add test `test_main_error_handling` -- invoke main() with missing files, verify it doesn't crash with unhandled exception.
@@ -283,7 +283,7 @@ After critical/high fixes verified, apply medium-priority fixes.
   - **Commit**: `test(scripts): add mark-tasks-complete concurrent access tests`
   - _Requirements: AC-3.2_
 
-- [ ] 3.6 [VERIFY] All tests passing
+- [x] 3.6 [VERIFY] All tests passing
   - **Do**: Run full test suite
   - **Done when**: All tests pass
   - **Verify**: `cd plugins/ralph-parallel && python3 -m pytest scripts/test_*.py -v 2>&1 | tail -30`
@@ -291,21 +291,21 @@ After critical/high fixes verified, apply medium-priority fixes.
 
 ## Phase 4: Quality Gates
 
-- [ ] 4.1 Shellcheck validation on all modified shell scripts
+- [x] 4.1 Shellcheck validation on all modified shell scripts
   - **Do**: Run shellcheck on all modified shell scripts. Fix any new warnings introduced.
   - **Files**: `plugins/ralph-parallel/hooks/scripts/task-completed-gate.sh`, `plugins/ralph-parallel/hooks/scripts/dispatch-coordinator.sh`, `plugins/ralph-parallel/hooks/scripts/session-setup.sh`, `plugins/ralph-parallel/hooks/scripts/teammate-idle-gate.sh`, `plugins/ralph-parallel/hooks/scripts/merge-guard.sh`, `plugins/ralph-parallel/scripts/capture-baseline.sh`
   - **Verify**: `shellcheck plugins/ralph-parallel/hooks/scripts/*.sh plugins/ralph-parallel/scripts/capture-baseline.sh 2>&1 | grep -c 'error' || echo 0` returns 0 errors
   - **Done when**: No shellcheck errors
   - **Commit**: `fix(scripts): address shellcheck warnings` (if needed)
 
-- [ ] 4.2 Python linting on all modified Python scripts
+- [x] 4.2 Python linting on all modified Python scripts
   - **Do**: Run any available Python linter (ruff, flake8, or pyright) on modified files. Fix issues.
   - **Files**: `plugins/ralph-parallel/scripts/*.py`
   - **Verify**: `python3 -m py_compile plugins/ralph-parallel/scripts/validate-pre-merge.py plugins/ralph-parallel/scripts/write-dispatch-state.py plugins/ralph-parallel/scripts/parse-and-partition.py plugins/ralph-parallel/scripts/mark-tasks-complete.py plugins/ralph-parallel/scripts/create-task-plan.py plugins/ralph-parallel/scripts/build-teammate-prompt.py && echo "OK"` prints OK
   - **Done when**: All Python files compile without syntax errors
   - **Commit**: `fix(scripts): address linting issues` (if needed)
 
-- [ ] 4.3 Create PR and verify
+- [x] 4.3 Create PR and verify
   - **Do**: Push branch, create PR referencing issue #8 with full audit finding coverage
   - **Verify**: `gh pr checks --watch` all green (or no CI configured)
   - **Done when**: PR ready for review

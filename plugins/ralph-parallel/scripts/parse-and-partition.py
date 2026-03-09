@@ -357,6 +357,7 @@ def parse_tasks(content: str) -> list[dict]:
 def _parse_tasks_checkbox(content: str) -> list[dict]:
     """Parse tasks in checkbox format: - [ ] X.Y [P] Description."""
     tasks = []
+    seen_ids = set()
     lines = content.split('\n')
     i = 0
 
@@ -371,6 +372,12 @@ def _parse_tasks_checkbox(content: str) -> list[dict]:
 
         completed = m.group(1).lower() == 'x'
         task_id = m.group(2)
+
+        if task_id in seen_ids:
+            print(f"WARNING: Duplicate task ID '{task_id}' — skipping", file=sys.stderr)
+            i += 1
+            continue
+        seen_ids.add(task_id)
         rest = m.group(3).strip()
 
         # Extract markers [P], [VERIFY] from the rest
@@ -451,6 +458,7 @@ def _parse_tasks_headers(content: str) -> list[dict]:
             ]
 
     # Second pass: parse ### X.Y task headers
+    seen_ids = set()
     while i < len(lines):
         line = lines[i]
 
@@ -461,6 +469,13 @@ def _parse_tasks_headers(content: str) -> list[dict]:
             continue
 
         task_id = m.group(1)
+
+        if task_id in seen_ids:
+            print(f"WARNING: Duplicate task ID '{task_id}' — skipping", file=sys.stderr)
+            i += 1
+            continue
+        seen_ids.add(task_id)
+
         description = m.group(2).strip()
         phase = int(task_id.split('.')[0])
 
@@ -626,6 +641,34 @@ def build_dependency_graph(tasks: list[dict]) -> list[dict]:
     return tasks
 
 
+def _detect_circular_deps(tasks):
+    """Detect circular dependencies using Kahn's algorithm. Returns list of cycle task IDs or empty list."""
+    # Build adjacency list
+    in_degree = {t['id']: 0 for t in tasks}
+    adj = {t['id']: [] for t in tasks}
+    for t in tasks:
+        for dep in t.get('dependencies', []):
+            if dep in adj:
+                adj[dep].append(t['id'])
+                in_degree[t['id']] = in_degree.get(t['id'], 0) + 1
+
+    # Kahn's algorithm
+    queue = [tid for tid, deg in in_degree.items() if deg == 0]
+    processed = []
+    while queue:
+        node = queue.pop(0)
+        processed.append(node)
+        for neighbor in adj.get(node, []):
+            in_degree[neighbor] -= 1
+            if in_degree[neighbor] == 0:
+                queue.append(neighbor)
+
+    if len(processed) != len(in_degree):
+        cycle_tasks = [tid for tid in in_degree if tid not in processed]
+        return cycle_tasks
+    return []
+
+
 # ──────────────────────────────────────────────────────────────────
 # Partitioning
 # ──────────────────────────────────────────────────────────────────
@@ -725,11 +768,10 @@ def _build_groups_from_predefined(predefined, all_tasks, parallel_tasks, max_tea
         group_tasks = []
         for tid in pg['taskIds']:
             if tid in task_map and not task_map[tid]['completed']:
-                task = task_map[tid]
-                # Strip dependencies that point outside this group
-                task['dependencies'] = [
-                    d for d in task['dependencies'] if d in group_task_ids
-                ]
+                # Deep-copy task to avoid mutating the original's dependencies
+                task = {**task_map[tid], 'dependencies': [
+                    d for d in task_map[tid]['dependencies'] if d in group_task_ids
+                ]}
                 group_tasks.append(task)
                 grouped_ids.add(tid)
 
@@ -1126,57 +1168,68 @@ def diagnose_format(content: str, path: Path) -> None:
 # ──────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description='Parse tasks.md and partition for parallel execution')
-    parser.add_argument('--tasks-md', required=True, help='Path to tasks.md')
-    parser.add_argument('--max-teammates', type=int, default=4, help='Max teammate groups (default: 4)')
-    parser.add_argument('--strategy', default='file-ownership', help='Partition strategy')
-    parser.add_argument('--format', action='store_true', help='Output formatted plan instead of JSON')
-    args = parser.parse_args()
+    try:
+        parser = argparse.ArgumentParser(description='Parse tasks.md and partition for parallel execution')
+        parser.add_argument('--tasks-md', required=True, help='Path to tasks.md')
+        parser.add_argument('--max-teammates', type=int, default=4, help='Max teammate groups (default: 4)')
+        parser.add_argument('--strategy', default='file-ownership', help='Partition strategy')
+        parser.add_argument('--format', action='store_true', help='Output formatted plan instead of JSON')
+        args = parser.parse_args()
 
-    tasks_path = Path(args.tasks_md)
-    if not tasks_path.exists():
-        print(f"Error: tasks.md not found at {tasks_path}", file=sys.stderr)
+        tasks_path = Path(args.tasks_md)
+        if not tasks_path.exists():
+            print(f"Error: tasks.md not found at {tasks_path}", file=sys.stderr)
+            sys.exit(1)
+
+        content = tasks_path.read_text()
+
+        tasks = parse_tasks(content)
+        if not tasks:
+            diagnose_format(content, tasks_path)
+            sys.exit(1)
+
+        tasks = build_dependency_graph(tasks)
+
+        cycle = _detect_circular_deps(tasks)
+        if cycle:
+            print(f"ERROR: Circular dependency detected among tasks: {', '.join(cycle)}", file=sys.stderr)
+            sys.exit(4)
+
+        # Infer project root from tasks.md path (walk up 2 dirs from specs/$name/tasks.md)
+        tasks_path_resolved = tasks_path.resolve()
+        project_root = str(tasks_path_resolved.parent.parent.parent)
+        quality_commands = discover_quality_commands(project_root, tasks_content=content)
+        verify_quality = classify_verify_commands(tasks)
+
+        # Pass content so partition_tasks can check for pre-defined groups
+        result = partition_tasks(tasks, args.max_teammates, content,
+                                 quality_commands=quality_commands, verify_quality=verify_quality,
+                                 strategy=args.strategy)
+
+        if result is None:
+            print("All tasks complete. Nothing to dispatch.", file=sys.stderr)
+            sys.exit(2)
+
+        if result['incompleteTasks'] == 1:
+            print("Only 1 task remaining — no parallelism benefit.", file=sys.stderr)
+            sys.exit(3)
+
+        if len(result['groups']) == 0:
+            print("Error: Could not create any parallel groups.", file=sys.stderr)
+            sys.exit(4)
+
+        if args.format:
+            print(format_plan(result, strategy=args.strategy))
+        else:
+            for g in result['groups']:
+                for t in g['taskDetails']:
+                    t['dependencies'] = list(t['dependencies']) if isinstance(t['dependencies'], set) else t['dependencies']
+            print(json.dumps(result, indent=2))
+    except SystemExit:
+        raise
+    except Exception as e:
+        print(f"ERROR: Unexpected error: {e}", file=sys.stderr)
         sys.exit(1)
-
-    content = tasks_path.read_text()
-
-    tasks = parse_tasks(content)
-    if not tasks:
-        diagnose_format(content, tasks_path)
-        sys.exit(1)
-
-    tasks = build_dependency_graph(tasks)
-
-    # Infer project root from tasks.md path (walk up 2 dirs from specs/$name/tasks.md)
-    tasks_path_resolved = tasks_path.resolve()
-    project_root = str(tasks_path_resolved.parent.parent.parent)
-    quality_commands = discover_quality_commands(project_root, tasks_content=content)
-    verify_quality = classify_verify_commands(tasks)
-
-    # Pass content so partition_tasks can check for pre-defined groups
-    result = partition_tasks(tasks, args.max_teammates, content,
-                             quality_commands=quality_commands, verify_quality=verify_quality,
-                             strategy=args.strategy)
-
-    if result is None:
-        print("All tasks complete. Nothing to dispatch.", file=sys.stderr)
-        sys.exit(2)
-
-    if result['incompleteTasks'] == 1:
-        print("Only 1 task remaining — no parallelism benefit.", file=sys.stderr)
-        sys.exit(3)
-
-    if len(result['groups']) == 0:
-        print("Error: Could not create any parallel groups.", file=sys.stderr)
-        sys.exit(4)
-
-    if args.format:
-        print(format_plan(result, strategy=args.strategy))
-    else:
-        for g in result['groups']:
-            for t in g['taskDetails']:
-                t['dependencies'] = list(t['dependencies']) if isinstance(t['dependencies'], set) else t['dependencies']
-        print(json.dumps(result, indent=2))
 
 
 if __name__ == '__main__':

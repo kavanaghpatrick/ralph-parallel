@@ -27,8 +27,14 @@ def _atomic_write(path: str, data: dict) -> None:
                                      suffix='.tmp', delete=False) as f:
         json.dump(data, f, indent=2)
         f.write('\n')
+        f.flush()
+        os.fsync(f.fileno())
         tmp_path = f.name
-    os.replace(tmp_path, path)
+    try:
+        os.replace(tmp_path, path)
+    except Exception:
+        os.unlink(tmp_path)
+        raise
 
 
 def check_existing_state(spec_dir: str) -> dict | None:
@@ -115,40 +121,51 @@ def main():
                         help='Path to spec directory')
     args = parser.parse_args()
 
-    # Validate inputs
-    if not os.path.isfile(args.partition_file):
-        print(f"ERROR: Partition file not found: {args.partition_file}",
+    if args.max_teammates < 1 or args.max_teammates > 20:
+        print(f"ERROR: --max-teammates must be between 1 and 20, got {args.max_teammates}",
               file=sys.stderr)
         sys.exit(1)
 
-    if not os.path.isdir(args.spec_dir):
-        print(f"ERROR: Spec directory not found: {args.spec_dir}",
-              file=sys.stderr)
+    try:
+        # Validate inputs
+        if not os.path.isfile(args.partition_file):
+            print(f"ERROR: Partition file not found: {args.partition_file}",
+                  file=sys.stderr)
+            sys.exit(1)
+
+        if not os.path.isdir(args.spec_dir):
+            print(f"ERROR: Spec directory not found: {args.spec_dir}",
+                  file=sys.stderr)
+            sys.exit(1)
+
+        # Read partition
+        with open(args.partition_file) as f:
+            partition = json.load(f)
+
+        # Check existing state (may supersede or error)
+        superseded_state = check_existing_state(args.spec_dir)
+
+        # Build and write new state
+        state = build_dispatch_state(partition, args)
+        state_path = os.path.join(args.spec_dir, '.dispatch-state.json')
+        _atomic_write(state_path, state)
+
+        # Output status
+        result = {
+            'status': 'written',
+            'path': state_path,
+            'superseded': superseded_state is not None,
+        }
+        if superseded_state is not None:
+            result['previousStatus'] = 'dispatched'
+
+        json.dump(result, sys.stdout)
+        print()  # trailing newline
+    except SystemExit:
+        raise
+    except Exception as e:
+        print(f"ERROR: Unexpected error: {e}", file=sys.stderr)
         sys.exit(1)
-
-    # Read partition
-    with open(args.partition_file) as f:
-        partition = json.load(f)
-
-    # Check existing state (may supersede or error)
-    superseded_state = check_existing_state(args.spec_dir)
-
-    # Build and write new state
-    state = build_dispatch_state(partition, args)
-    state_path = os.path.join(args.spec_dir, '.dispatch-state.json')
-    _atomic_write(state_path, state)
-
-    # Output status
-    result = {
-        'status': 'written',
-        'path': state_path,
-        'superseded': superseded_state is not None,
-    }
-    if superseded_state is not None:
-        result['previousStatus'] = 'dispatched'
-
-    json.dump(result, sys.stdout)
-    print()  # trailing newline
 
 
 if __name__ == '__main__':
