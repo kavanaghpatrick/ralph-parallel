@@ -129,9 +129,13 @@ fi
 UNCOMPLETED=""
 while IFS= read -r TASK_ID; do
   [ -z "$TASK_ID" ] && continue
+  # Validate TASK_ID format: must be digits.digits (e.g., 1.1, 2.13)
+  if ! printf '%s' "$TASK_ID" | grep -qE '^[0-9]+\.[0-9]+$'; then
+    continue
+  fi
   # Check if task line has [ ] (uncompleted) vs [x] (completed)
-  if grep -qE "^\s*- \[ \] ${TASK_ID}\b" "$TASKS_MD"; then
-    DESC=$(grep -oE "^\s*- \[ \] ${TASK_ID}\s+.*" "$TASKS_MD" | sed "s/.*${TASK_ID}\s*//" | head -1)
+  if grep -qE "^[[:space:]]*- \[ \] ${TASK_ID}\b" "$TASKS_MD"; then
+    DESC=$(grep -oE "^[[:space:]]*- \[ \] ${TASK_ID}[[:space:]]+.*" "$TASKS_MD" | sed "s/.*${TASK_ID}[[:space:]]*//" | head -1)
     UNCOMPLETED="${UNCOMPLETED}  - ${TASK_ID}: ${DESC}\n"
   fi
 done <<< "$GROUP_TASKS"

@@ -39,7 +39,7 @@ Focus: Fix all 3 critical and 5 high-severity findings. Skip tests first, verify
   - _Requirements: FR-2_
   - _Design: Component B_
 
-- [ ] 1.4 Validate TASK_ID format in teammate-idle-gate.sh (C2b)
+- [x] 1.4 Validate TASK_ID format in teammate-idle-gate.sh (C2b)
   - **Do**: In the while loop at line 130, after `TASK_ID` is read, validate it matches `^[0-9]+\.[0-9]+$` before using it in grep patterns on lines 133-134. If invalid, `continue` to skip. Also change `grep -qE "^\s*- \[ \] ${TASK_ID}\b"` on line 133 to use a validated fixed string approach, and fix the `sed` on line 134 that uses `${TASK_ID}` unescaped.
   - **Files**: `plugins/ralph-parallel/hooks/scripts/teammate-idle-gate.sh`
   - **Done when**: TASK_ID values like `1.1` work, values with regex metacharacters are skipped
@@ -48,7 +48,7 @@ Focus: Fix all 3 critical and 5 high-severity findings. Skip tests first, verify
   - _Requirements: FR-2_
   - _Design: Component B_
 
-- [ ] 1.5 Validate SESSION_ID before file path use (C3)
+- [x] 1.5 Validate SESSION_ID before file path use (C3)
   - **Do**: In dispatch-coordinator.sh after SESSION_ID is parsed (around line 124), add validation: `if [ -n "$SESSION_ID" ] && ! printf '%s' "$SESSION_ID" | grep -qE '^[a-zA-Z0-9_-]+$'; then SESSION_ID=""; fi`. Apply the same validation in teammate-idle-gate.sh where SESSION_ID would be used in COUNTER_FILE path (line 101). Also apply in session-setup.sh after SESSION_ID is parsed (line 99).
   - **Files**: `plugins/ralph-parallel/hooks/scripts/dispatch-coordinator.sh`, `plugins/ralph-parallel/hooks/scripts/teammate-idle-gate.sh`, `plugins/ralph-parallel/hooks/scripts/session-setup.sh`
   - **Done when**: SESSION_ID with path traversal chars (e.g., `../etc/passwd`) is cleared to empty
