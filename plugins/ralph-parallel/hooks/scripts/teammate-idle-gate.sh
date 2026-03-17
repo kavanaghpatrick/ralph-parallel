@@ -79,7 +79,11 @@ esac
 
 SPEC_NAME="${TEAM_NAME%-parallel}"
 SPEC_NAME=$(_sanitize_name "$SPEC_NAME") || exit 0
-PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || PROJECT_ROOT="${CWD:-$(pwd)}"
+if [ -n "$CWD" ] && [ -d "$CWD" ]; then
+  PROJECT_ROOT="$CWD"
+else
+  PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || PROJECT_ROOT="$(pwd)"
+fi
 SPEC_DIR="$PROJECT_ROOT/specs/$SPEC_NAME"
 DISPATCH_STATE="$SPEC_DIR/.dispatch-state.json"
 
