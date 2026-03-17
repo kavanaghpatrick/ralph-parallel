@@ -222,10 +222,11 @@ if [ "$DISPATCH_ACTIVE" = true ]; then
         # Error path: if jq/mv fails, reclaim silently fails. Session continues
         # without coordinator ownership — stop hook won't block for this session
         # (coordinatorSessionId mismatch), which is safe (user can re-dispatch).
-        jq --arg sid "$SESSION_ID" '.coordinatorSessionId = $sid' "$DISPATCH_FILE" > "${DISPATCH_FILE}.tmp.$$" 2>/dev/null \
-          && mv "${DISPATCH_FILE}.tmp.$$" "$DISPATCH_FILE" 2>/dev/null \
+        _tmpf=$(mktemp "${DISPATCH_FILE}.XXXXXX" 2>/dev/null) \
+          && jq --arg sid "$SESSION_ID" '.coordinatorSessionId = $sid' "$DISPATCH_FILE" > "$_tmpf" 2>/dev/null \
+          && mv "$_tmpf" "$DISPATCH_FILE" 2>/dev/null \
           && echo "ralph-parallel: Auto-reclaimed dispatch for '$ACTIVE_SPEC' (session changed)" \
-          || echo "ralph-parallel: Warning: failed to auto-reclaim dispatch for '$ACTIVE_SPEC'"
+          || { rm -f "${_tmpf:-}" 2>/dev/null; echo "ralph-parallel: Warning: failed to auto-reclaim dispatch for '$ACTIVE_SPEC'"; }
       fi
     elif [ -z "$COORD_SID" ] && [ "$TEAM_EXISTS" = true ]; then
       # Distinguish explicitly released (null) from missing (legacy)
@@ -234,10 +235,11 @@ if [ "$DISPATCH_ACTIVE" = true ]; then
         # Legacy dispatch (field missing) -- stamp current session
         # Error path: if write fails, dispatch stays without coordinatorSessionId.
         # Stop hook treats this as ambiguous ownership = still blocks (safe).
-        jq --arg sid "$SESSION_ID" '.coordinatorSessionId = $sid' "$DISPATCH_FILE" > "${DISPATCH_FILE}.tmp.$$" 2>/dev/null \
-          && mv "${DISPATCH_FILE}.tmp.$$" "$DISPATCH_FILE" 2>/dev/null \
+        _tmpf=$(mktemp "${DISPATCH_FILE}.XXXXXX" 2>/dev/null) \
+          && jq --arg sid "$SESSION_ID" '.coordinatorSessionId = $sid' "$DISPATCH_FILE" > "$_tmpf" 2>/dev/null \
+          && mv "$_tmpf" "$DISPATCH_FILE" 2>/dev/null \
           && echo "ralph-parallel: Stamped session ID on legacy dispatch for '$ACTIVE_SPEC'" \
-          || echo "ralph-parallel: Warning: failed to stamp session ID on dispatch for '$ACTIVE_SPEC'"
+          || { rm -f "${_tmpf:-}" 2>/dev/null; echo "ralph-parallel: Warning: failed to stamp session ID on dispatch for '$ACTIVE_SPEC'"; }
       else
         echo "ralph-parallel: Dispatch '$ACTIVE_SPEC' was explicitly released (coordinatorSessionId: null). Skipping auto-claim."
       fi
@@ -255,11 +257,12 @@ if [ "$DISPATCH_ACTIVE" = true ]; then
     # Error path: if stale marking fails, stop hook will still see "dispatched"
     # status + no team = scan mode allows stop (TEAM_LOST + !TEAM_NAME = exit 0).
     STALE_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) || STALE_TS="1970-01-01T00:00:00Z"
-    jq --arg reason "team_lost" --arg ts "$STALE_TS" \
-      '.status = "stale" | .staleReason = $reason | .staleSince = $ts' \
-      "$DISPATCH_FILE" > "${DISPATCH_FILE}.tmp.$$" 2>/dev/null \
-      && mv "${DISPATCH_FILE}.tmp.$$" "$DISPATCH_FILE" 2>/dev/null \
-      || true
+    _tmpf=$(mktemp "${DISPATCH_FILE}.XXXXXX" 2>/dev/null) \
+      && jq --arg reason "team_lost" --arg ts "$STALE_TS" \
+        '.status = "stale" | .staleReason = $reason | .staleSince = $ts' \
+        "$DISPATCH_FILE" > "$_tmpf" 2>/dev/null \
+      && mv "$_tmpf" "$DISPATCH_FILE" 2>/dev/null \
+      || { rm -f "${_tmpf:-}" 2>/dev/null; true; }
     # Restore gc.auto since dispatch is no longer active
     CURRENT_GC=$(git config --get gc.auto 2>/dev/null || echo "default")
     if [ "$CURRENT_GC" = "0" ]; then

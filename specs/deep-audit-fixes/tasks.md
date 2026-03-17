@@ -182,7 +182,7 @@ Focus: Fix all 3 critical and 5 high-severity findings. Skip tests first, verify
   - _Requirements: FR-17_
   - _Design: Component E_
 
-- [ ] 2.7 Replace .tmp.$$ with mktemp (M9)
+- [x] 2.7 Replace .tmp.$$ with mktemp (M9)
   - **Do**: In session-setup.sh, replace all `"${DISPATCH_FILE}.tmp.$$"` patterns (lines 215, 227, 250) with `$(mktemp "${DISPATCH_FILE}.XXXXXX")`. Same for dispatch-coordinator.sh line 100 (`"${state_file}.tmp.$$"` to `$(mktemp "${state_file}.XXXXXX")`). Use a local variable for the temp file and ensure cleanup on failure (`|| rm -f "$tmpfile"`).
   - **Files**: `plugins/ralph-parallel/hooks/scripts/session-setup.sh`, `plugins/ralph-parallel/hooks/scripts/dispatch-coordinator.sh`
   - **Done when**: No `.tmp.$$` patterns remain in these files

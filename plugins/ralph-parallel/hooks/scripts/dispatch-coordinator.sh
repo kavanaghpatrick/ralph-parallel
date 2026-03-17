@@ -102,8 +102,10 @@ write_heartbeat() {
   if [ -z "$ts" ]; then
     return 0  # Skip heartbeat write if date fails; blocking still works
   fi
-  jq --arg ts "$ts" '.lastHeartbeat = $ts' "$state_file" > "${state_file}.tmp.$$" 2>/dev/null \
-    && mv "${state_file}.tmp.$$" "$state_file" 2>/dev/null || true
+  _tmpf=$(mktemp "${state_file}.XXXXXX" 2>/dev/null) \
+    && jq --arg ts "$ts" '.lastHeartbeat = $ts' "$state_file" > "$_tmpf" 2>/dev/null \
+    && mv "$_tmpf" "$state_file" 2>/dev/null \
+    || { rm -f "${_tmpf:-}" 2>/dev/null; true; }
 }
 
 _sanitize_name() {
