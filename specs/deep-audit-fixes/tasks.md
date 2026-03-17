@@ -191,7 +191,7 @@ Focus: Fix all 3 critical and 5 high-severity findings. Skip tests first, verify
   - _Requirements: FR-18_
   - _Design: Component E_
 
-- [ ] 2.8 Fix verify command backtick stripping (M10)
+- [x] 2.8 Fix verify command backtick stripping (M10)
   - **Do**: In task-completed-gate.sh line 120, the `sed 's/` `//g'` strips ALL backticks from the verify command, but should only strip the outer pair (if present). Change to strip only leading/trailing backticks: `sed 's/^` `//;s/` `$//'` or use a more targeted approach. Example: `` `pnpm test` `` should become `pnpm test`, but `echo \`date\`` should keep its backticks (though this would be rejected by sanitizer anyway).
   - **Files**: `plugins/ralph-parallel/hooks/scripts/task-completed-gate.sh`
   - **Done when**: Outer backtick pairs are stripped but internal backticks preserved

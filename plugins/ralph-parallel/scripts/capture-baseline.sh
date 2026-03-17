@@ -140,11 +140,11 @@ parse_test_count() {
   local count=""
 
   # Jest/Vitest: "Tests:  5 passed" or "5 passed"
-  count=$(echo "$output" | grep -oE 'Tests:\s+[0-9]+ passed' | grep -oE '[0-9]+' | head -1)
+  count=$(echo "$output" | grep -oE 'Tests:[[:space:]]+[0-9]+ passed' | grep -oE '[0-9]+' | head -1)
   if [ -n "$count" ]; then echo "$count"; return; fi
 
   # Pytest: "5 passed"
-  count=$(echo "$output" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' | head -1)
+  count=$(echo "$output" | grep -oE '(^|[[:space:]])[0-9]+ passed' | grep -oE '[0-9]+' | head -1)
   if [ -n "$count" ]; then echo "$count"; return; fi
 
   # Cargo test: "test result: ok. 5 passed"
@@ -152,7 +152,7 @@ parse_test_count() {
   if [ -n "$count" ]; then echo "$count"; return; fi
 
   # Go test: count "ok" lines
-  count=$(echo "$output" | grep -cE '^ok\s+' 2>/dev/null || echo 0)
+  count=$(echo "$output" | grep -cE '^ok[[:space:]]+' 2>/dev/null || echo 0)
   if [ "$count" -gt 0 ] 2>/dev/null; then echo "$count"; return; fi
 
   # Generic fallback: count lines containing pass/ok/checkmark
