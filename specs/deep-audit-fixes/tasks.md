@@ -57,7 +57,7 @@ Focus: Fix all 3 critical and 5 high-severity findings. Skip tests first, verify
   - _Requirements: FR-3_
   - _Design: Component B_
 
-- [ ] 1.6 Fix pipeline failure in session-setup.sh orphan cleanup (H1)
+- [x] 1.6 Fix pipeline failure in session-setup.sh orphan cleanup (H1)
   - **Do**: On line 270, change `TEAM_SPEC=$(basename "$team_dir" | sed 's/-parallel$//')` to `TEAM_SPEC=$(basename "$team_dir" | sed 's/-parallel$//') || continue`. This prevents the `set -eo pipefail` from crashing the entire script when basename/sed fails. The `|| continue` on line 271 already handles `_sanitize_name` failure, but the pipeline on 270 needs its own guard.
   - **Files**: `plugins/ralph-parallel/hooks/scripts/session-setup.sh`
   - **Done when**: Line 270 has `|| continue` at the end
@@ -66,7 +66,7 @@ Focus: Fix all 3 critical and 5 high-severity findings. Skip tests first, verify
   - _Requirements: FR-6_
   - _Design: Component D_
 
-- [ ] 1.7 Validate SHA before git rev-list --count (H2)
+- [x] 1.7 Validate SHA before git rev-list --count (H2)
   - **Do**: In session-setup.sh `_ralph_update_check()` function, before line 87 (`behind=$(git -C "$mktplace_dir" rev-list ...)`), add a check: `if ! git -C "$mktplace_dir" cat-file -e "$installed_sha" 2>/dev/null; then return 0; fi`. This prevents rev-list from failing on orphaned/garbage-collected SHAs.
   - **Files**: `plugins/ralph-parallel/hooks/scripts/session-setup.sh`
   - **Done when**: An invalid SHA like `deadbeef1234` causes early return, not error
@@ -75,7 +75,7 @@ Focus: Fix all 3 critical and 5 high-severity findings. Skip tests first, verify
   - _Requirements: FR-7_
   - _Design: Component D_
 
-- [ ] 1.8 Fix printf '%b' escape sequence injection (H3)
+- [x] 1.8 Fix printf '%b' escape sequence injection (H3)
   - **Do**: In teammate-idle-gate.sh, change line 135 from `UNCOMPLETED="${UNCOMPLETED}  - ${TASK_ID}: ${DESC}\n"` to use a real newline (either via `$'\n'` or by breaking the string across lines). Change line 158 from `printf '%b\n' "$UNCOMPLETED"` to `printf '%s' "$UNCOMPLETED"`. The `\n` embedded in the string via `$'\n'` is already a real newline character, so `%s` will print it correctly.
   - **Files**: `plugins/ralph-parallel/hooks/scripts/teammate-idle-gate.sh`
   - **Done when**: `printf '%b'` no longer appears in the file, and task descriptions with `\t` or `\n` are printed literally

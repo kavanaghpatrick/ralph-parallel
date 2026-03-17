@@ -82,6 +82,9 @@ if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
       return 0
     fi
 
+    # Validate installed SHA exists (may be orphaned/garbage-collected)
+    if ! git -C "$mktplace_dir" cat-file -e "$installed_sha" 2>/dev/null; then return 0; fi
+
     # Count commits behind
     local behind
     behind=$(git -C "$mktplace_dir" rev-list --count "${installed_sha}..origin/HEAD" 2>/dev/null) || return 0
@@ -270,7 +273,7 @@ fi
 # Detect teams for terminal-state dispatches and clean up
 for team_dir in "$HOME/.claude/teams/"*-parallel; do
   [ -d "$team_dir" ] || continue
-  TEAM_SPEC=$(basename "$team_dir" | sed 's/-parallel$//')
+  TEAM_SPEC=$(basename "$team_dir" | sed 's/-parallel$//') || continue
   TEAM_SPEC=$(_sanitize_name "$TEAM_SPEC" 2>/dev/null) || continue
   ORPHAN_STATE="$GIT_ROOT/specs/$TEAM_SPEC/.dispatch-state.json"
 
