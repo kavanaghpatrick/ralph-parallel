@@ -93,7 +93,7 @@ Focus: Fix all 3 critical and 5 high-severity findings. Skip tests first, verify
   - _Requirements: FR-4_
   - _Design: Component C_
 
-- [ ] 1.10 Replace here-strings with POSIX heredocs (H4b -- teammate-idle-gate.sh)
+- [x] 1.10 Replace here-strings with POSIX heredocs (H4b -- teammate-idle-gate.sh)
   - **Do**: Replace `done <<< "$GROUP_TASKS"` on line 137 with a POSIX heredoc. The loop sets `UNCOMPLETED` which must propagate, so use heredoc not pipe.
   - **Files**: `plugins/ralph-parallel/hooks/scripts/teammate-idle-gate.sh`
   - **Done when**: No `<<<` appears in the file
@@ -102,7 +102,7 @@ Focus: Fix all 3 critical and 5 high-severity findings. Skip tests first, verify
   - _Requirements: FR-4_
   - _Design: Component C_
 
-- [ ] 1.11 Replace here-strings and bash arrays (H4c -- task-completed-gate.sh)
+- [x] 1.11 Replace here-strings and bash arrays (H4c -- task-completed-gate.sh)
   - **Do**: Replace lines 250-251 which use `IFS=',' read -ra FILE_LIST <<< "$TASK_FILES"` and `for f in "${FILE_LIST[@]}"`. Replace with POSIX: save old IFS, set `IFS=','`, iterate with `for f in $TASK_FILES; do`, restore IFS. Or use `echo "$TASK_FILES" | tr ',' '\n'` piped to a while loop with heredoc to preserve MISSING variable. Since MISSING must propagate out of the loop, restructure to use a heredoc approach or a temp file.
   - **Files**: `plugins/ralph-parallel/hooks/scripts/task-completed-gate.sh`
   - **Done when**: No `<<<`, `read -ra`, or `${FILE_LIST[@]}` in the file
@@ -111,7 +111,7 @@ Focus: Fix all 3 critical and 5 high-severity findings. Skip tests first, verify
   - _Requirements: FR-4, FR-5_
   - _Design: Component C_
 
-- [ ] 1.12 Add race condition documentation (H5)
+- [x] 1.12 Add race condition documentation (H5)
   - **Do**: Add documentation comments to the counter file read/write functions in dispatch-coordinator.sh (lines 49-86) and teammate-idle-gate.sh (lines 30-62). Add a comment block explaining the known race condition: "NOTE: Counter read-modify-write is not atomic. Two concurrent sessions could read the same value and both increment to N+1 instead of N+2. This is acceptable because the counter is a safety valve, not a precise count. Worst case: one extra block cycle."
   - **Files**: `plugins/ralph-parallel/hooks/scripts/dispatch-coordinator.sh`, `plugins/ralph-parallel/hooks/scripts/teammate-idle-gate.sh`
   - **Done when**: Both files have race condition documentation near counter functions

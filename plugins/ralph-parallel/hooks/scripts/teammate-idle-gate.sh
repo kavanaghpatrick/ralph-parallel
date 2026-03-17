@@ -26,6 +26,10 @@ _sanitize_name() {
 }
 
 # --- Counter functions (inlined from dispatch-coordinator.sh pattern) ---
+# NOTE: Counter read-modify-write is not atomic. Two concurrent sessions could
+# read the same value and both increment to N+1 instead of N+2. This is
+# acceptable because the counter is a safety valve, not a precise count.
+# Worst case: one extra block cycle.
 
 read_block_counter() {
   local counter_file="$1"
@@ -139,7 +143,9 @@ while IFS= read -r TASK_ID; do
     UNCOMPLETED="${UNCOMPLETED}  - ${TASK_ID}: ${DESC}
 "
   fi
-done <<< "$GROUP_TASKS"
+done <<EOF_TASKS
+${GROUP_TASKS}
+EOF_TASKS
 
 if [ -z "$UNCOMPLETED" ]; then
   # All group tasks complete in tasks.md — allow idle
