@@ -36,6 +36,63 @@ if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
   fi
 fi
 
+# Auto-update notification: check if a newer version is available upstream
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+  _ralph_update_check() {
+    local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/ralph-parallel"
+    mkdir -p "$cache_dir" 2>/dev/null || return 0
+    local cache_file="$cache_dir/last_update_check"
+
+    # 24-hour cache: skip if checked recently
+    if [ -f "$cache_file" ]; then
+      local last_check now_epoch
+      last_check=$(cat "$cache_file" 2>/dev/null) || last_check=0
+      now_epoch=$(date +%s 2>/dev/null) || now_epoch=0
+      local age=$(( now_epoch - last_check ))
+      if [ "$age" -lt 86400 ] 2>/dev/null; then
+        return 0
+      fi
+    fi
+
+    # Read marketplace clone directory
+    local mktplace_dir
+    mktplace_dir=$(jq -r '.[0].path // empty' "$HOME/.claude/plugins/known_marketplaces.json" 2>/dev/null) || return 0
+    [ -n "$mktplace_dir" ] && [ -d "$mktplace_dir" ] || return 0
+
+    # Read installed SHA
+    local installed_sha
+    installed_sha=$(jq -r '.[] | select(.name == "ralph-parallel") | .installedCommitSha // empty' "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null) || return 0
+    [ -n "$installed_sha" ] || return 0
+
+    # Fetch latest from origin (with timeout to avoid blocking session start)
+    timeout 15 git -C "$mktplace_dir" fetch origin --quiet 2>/dev/null || true
+
+    # Update cache timestamp after fetch (regardless of comparison result)
+    date +%s > "$cache_file" 2>/dev/null || true
+
+    # Compare installed SHA against origin/HEAD
+    local remote_sha
+    remote_sha=$(git -C "$mktplace_dir" rev-parse origin/HEAD 2>/dev/null) || return 0
+    [ -n "$remote_sha" ] || return 0
+
+    # Check both 7-char prefix and full SHA
+    local installed_prefix="${installed_sha:0:7}"
+    local remote_prefix="${remote_sha:0:7}"
+    if [ "$installed_sha" = "$remote_sha" ] || [ "$installed_prefix" = "$remote_prefix" ]; then
+      return 0
+    fi
+
+    # Count commits behind
+    local behind
+    behind=$(git -C "$mktplace_dir" rev-list --count "${installed_sha}..origin/HEAD" 2>/dev/null) || return 0
+    if [ "$behind" -gt 0 ] 2>/dev/null; then
+      echo "ralph-parallel: Update available ($behind commits behind). Run: claude plugin update ralph-parallel@ralph-parallel"
+    fi
+  }
+  _ralph_update_check 2>/dev/null || true
+  unset -f _ralph_update_check
+fi
+
 # Read hook input (must be first -- stdin is consumed once)
 # Error path: if jq fails, SESSION_ID="" = no session isolation (legacy behavior)
 INPUT=$(cat)
