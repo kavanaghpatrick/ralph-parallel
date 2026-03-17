@@ -146,7 +146,7 @@ Focus: Fix all 3 critical and 5 high-severity findings. Skip tests first, verify
   - _Requirements: FR-11_
   - _Design: Component E_
 
-- [ ] 2.3 Anchor test count parsing patterns (M3)
+- [x] 2.3 Anchor test count parsing patterns (M3)
   - **Do**: In the `parse_test_count()` functions in both task-completed-gate.sh and capture-baseline.sh, make patterns more specific to avoid false matches. Use `[[:space:]]` POSIX character classes instead of `\s`. For the "5 passed" pattern, anchor with word boundaries or preceding space to avoid matching "105 passed" as "5 passed" from substring. Change `grep -oE '[0-9]+ passed'` to `grep -oE '(^|[[:space:]])[0-9]+ passed'`.
   - **Files**: `plugins/ralph-parallel/hooks/scripts/task-completed-gate.sh`, `plugins/ralph-parallel/scripts/capture-baseline.sh`
   - **Done when**: Both parse_test_count functions use anchored patterns with POSIX char classes
@@ -173,7 +173,7 @@ Focus: Fix all 3 critical and 5 high-severity findings. Skip tests first, verify
   - _Requirements: FR-15_
   - _Design: Component E_
 
-- [ ] 2.6 Add BASH_SOURCE fallback in test scripts (M8)
+- [x] 2.6 Add BASH_SOURCE fallback in test scripts (M8)
   - **Do**: In test_stop_hook.sh line 26 and test_session_isolation.sh line 27, change `SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"` to `SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"`. merge-guard.sh already has this fallback pattern.
   - **Files**: `plugins/ralph-parallel/scripts/test_stop_hook.sh`, `plugins/ralph-parallel/scripts/test_session_isolation.sh`
   - **Done when**: Both test scripts use `${BASH_SOURCE[0]:-$0}` pattern

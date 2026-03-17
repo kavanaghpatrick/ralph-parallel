@@ -24,7 +24,7 @@ _RALPH_TMP="${TMPDIR:-/tmp}"
 # causing scan mode to pick up real dispatch states instead of test fixtures.
 export GIT_CEILING_DIRECTORIES="${_RALPH_TMP%/}"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 STOP_HOOK="$PROJECT_ROOT/ralph-parallel/hooks/scripts/dispatch-coordinator.sh"
