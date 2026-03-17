@@ -26,6 +26,11 @@ _sanitize_cmd() {
     echo "ralph-parallel: REJECTED command (substitution): $cmd" >&2
     return 1
   fi
+  # Reject command separators and pipes (; | && ||)
+  if printf '%s' "$cmd" | grep -qE ';|\||\&\&|\|\|' 2>/dev/null; then
+    echo "ralph-parallel: REJECTED command (separator/pipe): $cmd" >&2
+    return 1
+  fi
   # Reject path traversal
   if printf '%s' "$cmd" | grep -qF '..' 2>/dev/null; then
     echo "ralph-parallel: REJECTED command (path traversal): $cmd" >&2

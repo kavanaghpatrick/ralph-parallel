@@ -12,7 +12,7 @@ generated: auto
 
 Focus: Fix all 3 critical and 5 high-severity findings. Skip tests first, verify existing tests still pass at checkpoint.
 
-- [ ] 1.1 Harden _sanitize_cmd() in task-completed-gate.sh (C1a)
+- [x] 1.1 Harden _sanitize_cmd() in task-completed-gate.sh (C1a)
   - **Do**: Add rejection for command separators (`;`, `&&`, `||`) and pipes (`|`) to `_sanitize_cmd()` function (lines 17-35). Add a new check after the existing command substitution check (line 28). The pattern should reject `;`, `|`, `&&`, `||` but NOT `--` (flag separators) or `=` (assignments).
   - **Files**: `plugins/ralph-parallel/hooks/scripts/task-completed-gate.sh`
   - **Done when**: `_sanitize_cmd "echo hello; rm -rf /"` returns 1, `_sanitize_cmd "pnpm test"` returns 0
