@@ -42,6 +42,11 @@ cleanup_and_allow() {
   exit 0
 }
 
+# NOTE: Counter read-modify-write is not atomic. Two concurrent sessions could
+# read the same value and both increment to N+1 instead of N+2. This is
+# acceptable because the counter is a safety valve, not a precise count.
+# Worst case: one extra block cycle.
+
 # Read and validate block counter; returns "count" or "0" if reset needed
 # Error path: any read/parse failure returns "0" (treat as first block).
 # This means temp dir permission denied or corrupt file = block still works,
