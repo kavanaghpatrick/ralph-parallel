@@ -11,6 +11,8 @@
 
 set -uo pipefail
 
+_RALPH_TMP="${TMPDIR:-/tmp}"
+
 # Isolate tests from parent environment (e.g., running inside a team dispatch)
 unset CLAUDE_CODE_AGENT_NAME 2>/dev/null || true
 unset CLAUDE_CODE_TEAM_NAME 2>/dev/null || true
@@ -105,10 +107,10 @@ cleanup_team_config() {
 }
 
 cleanup_counter_files() {
-  rm -f /tmp/ralph-stop-test-spec-* 2>/dev/null || true
-  rm -f /tmp/ralph-stop-test-spec- 2>/dev/null || true
-  rm -f /tmp/ralph-stop-spec-* 2>/dev/null || true
-  rm -f /tmp/tsh12_out1 /tmp/tsh12_out2 /tmp/tsh12_err1 /tmp/tsh12_err2 2>/dev/null || true
+  rm -f "$_RALPH_TMP"/ralph-stop-test-spec-* 2>/dev/null || true
+  rm -f "$_RALPH_TMP"/ralph-stop-test-spec- 2>/dev/null || true
+  rm -f "$_RALPH_TMP"/ralph-stop-spec-* 2>/dev/null || true
+  rm -f "$_RALPH_TMP"/tsh12_out1 "$_RALPH_TMP"/tsh12_out2 "$_RALPH_TMP"/tsh12_err1 "$_RALPH_TMP"/tsh12_err2 2>/dev/null || true
 }
 
 begin_test() {
@@ -247,9 +249,9 @@ test_TSH1_clean_block_and_release() {
   # Step 1: Trigger stop hook with TEAM_NAME context (realistic coordinator scenario)
   local stdout stderr exit_code
   stdout=$(cd "$tmpdir" && echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
-    | env -u CLAUDE_CODE_AGENT_NAME CLAUDE_CODE_TEAM_NAME="test-spec-parallel" bash "$STOP_HOOK" 2>/tmp/tsh1_stderr) || true
+    | env -u CLAUDE_CODE_AGENT_NAME CLAUDE_CODE_TEAM_NAME="test-spec-parallel" bash "$STOP_HOOK" 2>"$_RALPH_TMP"/tsh1_stderr) || true
   exit_code=$?
-  stderr=$(cat /tmp/tsh1_stderr 2>/dev/null)
+  stderr=$(cat "$_RALPH_TMP"/tsh1_stderr 2>/dev/null)
 
   assert_exit_code "$exit_code" 0 "blocking should exit 0"
   assert_stdout_json "$stdout" "block" "test-spec" "should output JSON block decision"
@@ -269,19 +271,19 @@ JSON
 
   # Step 3: Trigger stop hook again with TEAM_NAME -- should allow with no output and clean counter
   stdout=$(cd "$tmpdir" && echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
-    | env -u CLAUDE_CODE_AGENT_NAME CLAUDE_CODE_TEAM_NAME="test-spec-parallel" bash "$STOP_HOOK" 2>/tmp/tsh1_stderr2) || true
+    | env -u CLAUDE_CODE_AGENT_NAME CLAUDE_CODE_TEAM_NAME="test-spec-parallel" bash "$STOP_HOOK" 2>"$_RALPH_TMP"/tsh1_stderr2) || true
   exit_code=$?
-  stderr=$(cat /tmp/tsh1_stderr2 2>/dev/null)
+  stderr=$(cat "$_RALPH_TMP"/tsh1_stderr2 2>/dev/null)
 
   assert_exit_code "$exit_code" 0 "terminal status should exit 0"
   assert_true "$([ -z "$stdout" ] && echo true || echo false)" "no stdout on allow"
   assert_no_stderr "$stderr" "no stderr on allow"
 
   # Step 4: Verify counter file cleaned up
-  local counter_file="/tmp/ralph-stop-test-spec-sess-A"
+  local counter_file="$_RALPH_TMP/ralph-stop-test-spec-sess-A"
   assert_true "$([ ! -f "$counter_file" ] && echo true || echo false)" "counter file cleaned up on terminal status"
 
-  cleanup_team_config "test-spec"; rm -rf "$tmpdir" /tmp/tsh1_stderr /tmp/tsh1_stderr2
+  cleanup_team_config "test-spec"; rm -rf "$tmpdir" "$_RALPH_TMP"/tsh1_stderr "$_RALPH_TMP"/tsh1_stderr2
   end_test "Clean block-and-release cycle"
 }
 
@@ -346,7 +348,7 @@ test_TSH3_counter_reset_new_dispatch() {
     | run_stop_hook "$tmpdir" > /dev/null 2>&1 || true
 
   # Verify counter is at 2
-  local counter_file="/tmp/ralph-stop-test-spec-sess-A"
+  local counter_file="$_RALPH_TMP/ralph-stop-test-spec-sess-A"
   local count
   count=$(cut -d: -f1 "$counter_file" 2>/dev/null) || count="0"
   assert_true "$([ "$count" = "2" ] && echo true || echo false)" "dispatch A counter should be 2"
@@ -619,7 +621,7 @@ test_TSH7_counter_file_missing_corrupt() {
   write_dispatch_state "$tmpdir" "sess-A" "dispatched"
   write_team_config "test-spec" 1
 
-  local counter_file="/tmp/ralph-stop-test-spec-sess-A"
+  local counter_file="$_RALPH_TMP/ralph-stop-test-spec-sess-A"
 
   # Scenario A: Counter file missing -- should still block (count=0, first block)
   rm -f "$counter_file" 2>/dev/null || true
@@ -659,7 +661,7 @@ test_TSH8_counter_survives_safety_valve() {
   write_dispatch_state "$tmpdir" "sess-A" "dispatched"
   write_team_config "test-spec" 1
 
-  local counter_file="/tmp/ralph-stop-test-spec-sess-A"
+  local counter_file="$_RALPH_TMP/ralph-stop-test-spec-sess-A"
   local stdout
 
   # Block 1, 2, 3 (reach MAX_BLOCKS)
@@ -694,7 +696,7 @@ test_TSH9_counter_cleanup_terminal_status() {
   local tmpdir; tmpdir=$(setup_project)
   write_team_config "test-spec" 1
 
-  local counter_file="/tmp/ralph-stop-test-spec-sess-A"
+  local counter_file="$_RALPH_TMP/ralph-stop-test-spec-sess-A"
 
   # Test each terminal status: merged, aborted, stale
   # Must use CLAUDE_CODE_TEAM_NAME so the script takes the team-name branch
@@ -736,7 +738,7 @@ JSON
   end_test "Counter file cleaned up on terminal status (merged/aborted/stale)"
 }
 
-# --- Test 10 (T-SH10): Empty SESSION_ID -> counter file at /tmp/ralph-stop-SPECNAME- ---
+# --- Test 10 (T-SH10): Empty SESSION_ID -> counter file at $_RALPH_TMP/ralph-stop-SPECNAME- ---
 
 test_TSH10_empty_session_id_counter() {
   begin_test "T-SH10"
@@ -744,8 +746,8 @@ test_TSH10_empty_session_id_counter() {
   write_dispatch_state "$tmpdir" "sess-A" "dispatched"
   write_team_config "test-spec" 1
 
-  # Counter file for empty session_id: /tmp/ralph-stop-test-spec-
-  local counter_file="/tmp/ralph-stop-test-spec-"
+  # Counter file for empty session_id: $_RALPH_TMP/ralph-stop-test-spec-
+  local counter_file="$_RALPH_TMP/ralph-stop-test-spec-"
   rm -f "$counter_file" 2>/dev/null || true
 
   local stdout exit_code
@@ -757,7 +759,7 @@ test_TSH10_empty_session_id_counter() {
   assert_stdout_json "$stdout" "block" "" "empty session_id blocks"
 
   # Counter file should be created at the expected path
-  assert_true "$([ -f "$counter_file" ] && echo true || echo false)" "counter file created at /tmp/ralph-stop-test-spec-"
+  assert_true "$([ -f "$counter_file" ] && echo true || echo false)" "counter file created at $_RALPH_TMP/ralph-stop-test-spec-"
 
   # Verify counter is functional (second block increments)
   echo "{\"session_id\":\"\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":true,\"last_assistant_message\":\"\"}" \
@@ -827,11 +829,11 @@ test_TSH12_concurrent_invocations() {
   local pid1 pid2 exit1 exit2
 
   echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
-    | run_stop_hook "$tmpdir" > /tmp/tsh12_out1 2>/tmp/tsh12_err1 &
+    | run_stop_hook "$tmpdir" > "$_RALPH_TMP"/tsh12_out1 2>"$_RALPH_TMP"/tsh12_err1 &
   pid1=$!
 
   echo "{\"session_id\":\"sess-A\",\"cwd\":\"$tmpdir\",\"stop_hook_active\":false,\"last_assistant_message\":\"\"}" \
-    | run_stop_hook "$tmpdir" > /tmp/tsh12_out2 2>/tmp/tsh12_err2 &
+    | run_stop_hook "$tmpdir" > "$_RALPH_TMP"/tsh12_out2 2>"$_RALPH_TMP"/tsh12_err2 &
   pid2=$!
 
   # Wait for both to complete
@@ -843,19 +845,19 @@ test_TSH12_concurrent_invocations() {
 
   # Both should have produced valid JSON block output
   local out1 out2
-  out1=$(cat /tmp/tsh12_out1 2>/dev/null) || out1=""
-  out2=$(cat /tmp/tsh12_out2 2>/dev/null) || out2=""
+  out1=$(cat "$_RALPH_TMP"/tsh12_out1 2>/dev/null) || out1=""
+  out2=$(cat "$_RALPH_TMP"/tsh12_out2 2>/dev/null) || out2=""
   assert_stdout_json "$out1" "block" "" "concurrent 1 produced valid JSON block"
   assert_stdout_json "$out2" "block" "" "concurrent 2 produced valid JSON block"
 
   # No stderr from either invocation
   local err1 err2
-  err1=$(cat /tmp/tsh12_err1 2>/dev/null) || err1=""
-  err2=$(cat /tmp/tsh12_err2 2>/dev/null) || err2=""
+  err1=$(cat "$_RALPH_TMP"/tsh12_err1 2>/dev/null) || err1=""
+  err2=$(cat "$_RALPH_TMP"/tsh12_err2 2>/dev/null) || err2=""
   assert_no_stderr "$err1" "concurrent 1 no stderr"
   assert_no_stderr "$err2" "concurrent 2 no stderr"
 
-  rm -f /tmp/tsh12_out1 /tmp/tsh12_out2 /tmp/tsh12_err1 /tmp/tsh12_err2
+  rm -f "$_RALPH_TMP"/tsh12_out1 "$_RALPH_TMP"/tsh12_out2 "$_RALPH_TMP"/tsh12_err1 "$_RALPH_TMP"/tsh12_err2
   cleanup_team_config "test-spec"; rm -rf "$tmpdir"
   end_test "Concurrent stop hook invocations don't crash"
 }
