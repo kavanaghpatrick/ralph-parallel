@@ -13,6 +13,7 @@
 #   stop_hook_active, last_assistant_message, session_id, cwd
 
 set -euo pipefail
+_RALPH_TMP="${TMPDIR:-/tmp}"
 
 # --- Helper functions ---
 
@@ -43,7 +44,7 @@ cleanup_and_allow() {
 
 # Read and validate block counter; returns "count" or "0" if reset needed
 # Error path: any read/parse failure returns "0" (treat as first block).
-# This means /tmp permission denied or corrupt file = block still works,
+# This means temp dir permission denied or corrupt file = block still works,
 # just without counter tracking (will never hit safety valve).
 read_block_counter() {
   local counter_file="$1"
@@ -72,7 +73,7 @@ read_block_counter() {
 }
 
 # Write block counter (non-fatal on failure)
-# Error path: if /tmp write fails (permission denied, disk full), || true
+# Error path: if temp dir write fails (permission denied, disk full), || true
 # ensures blocking still works — just without counter tracking, so the
 # safety valve (MAX_BLOCKS) won't trigger and the hook blocks indefinitely
 # until dispatch reaches terminal status.
@@ -216,7 +217,7 @@ STATUS=$(echo "$STATE_JSON" | jq -r '.status // "unknown"') || exit 0
 DISPATCHED_AT=$(echo "$STATE_JSON" | jq -r '.dispatchedAt // "unknown"') || DISPATCHED_AT="unknown"
 
 # --- Block counter file path ---
-COUNTER_FILE="/tmp/ralph-stop-${SPEC_NAME}-${SESSION_ID}"
+COUNTER_FILE="$_RALPH_TMP/ralph-stop-${SPEC_NAME}-${SESSION_ID}"
 
 # --- Terminal status check ---
 # "merged" falls through to completion check (prevents bypass).
