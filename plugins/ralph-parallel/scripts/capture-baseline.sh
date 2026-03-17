@@ -18,7 +18,7 @@ set -euo pipefail
 
 _sanitize_cmd() {
   local cmd="$1"
-  if printf '%s' "$cmd" | grep -qP '\x00' 2>/dev/null; then
+  if [ "$(printf '%s' "$cmd" | wc -c)" != "$(printf '%s' "$cmd" | tr -d '\0' | wc -c)" ]; then
     echo "ralph-parallel: REJECTED command (null bytes): $cmd" >&2
     return 1
   fi
@@ -37,7 +37,7 @@ _sanitize_cmd() {
 
 DISPATCH_STATE=""
 
-while [[ $# -gt 0 ]]; do
+while [ $# -gt 0 ]; do
   case "$1" in
     --dispatch-state)
       DISPATCH_STATE="$2"
@@ -107,7 +107,8 @@ if ! _sanitize_cmd "$TEST_CMD"; then
   exit 0
 fi
 TEST_OUTPUT=$(eval "$TEST_CMD" 2>&1) && TEST_EXIT=0 || TEST_EXIT=$?
-TEST_OUTPUT=$(printf '%s' "$TEST_OUTPUT" | sed $'s/\x1b\\[[0-9;]*m//g')
+ESC=$(printf '\033')
+TEST_OUTPUT=$(printf '%s' "$TEST_OUTPUT" | sed "s/${ESC}\[[0-9;]*m//g")
 
 if [ "$TEST_EXIT" -ne 0 ]; then
   echo "ralph-parallel: Test command failed (exit $TEST_EXIT) — baseline will be -1" >&2
