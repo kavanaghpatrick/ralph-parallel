@@ -65,7 +65,7 @@ if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
     [ -n "$installed_sha" ] || return 0
 
     # Fetch latest from origin (with timeout to avoid blocking session start)
-    timeout 15 git -C "$mktplace_dir" fetch origin --quiet 2>/dev/null || true
+    timeout 15 git -C "$mktplace_dir" fetch origin --quiet < /dev/null 2>/dev/null || true
 
     # Update cache timestamp after fetch (regardless of comparison result)
     date +%s > "$cache_file" 2>/dev/null || true
@@ -195,7 +195,7 @@ if [ "$DISPATCH_ACTIVE" = true ]; then
         # This is the safe default: reclaiming a live dispatch is recoverable
         # (coordinator re-stamps on next session), while failing to reclaim a
         # dead dispatch would permanently trap the user.
-        HEARTBEAT_EPOCH=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$HEARTBEAT" "+%s" 2>/dev/null) \
+        HEARTBEAT_EPOCH=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$HEARTBEAT" "+%s" 2>/dev/null) \
           || HEARTBEAT_EPOCH=$(date -d "$HEARTBEAT" "+%s" 2>/dev/null) \
           || HEARTBEAT_EPOCH=0
         NOW_EPOCH=$(date +%s 2>/dev/null) || NOW_EPOCH=0

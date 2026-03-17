@@ -31,7 +31,8 @@ JSON
 
   local stderr_file="$tmpdir/stderr.txt"
   local exit_code=0
-  echo "$input" | bash "$GATE_SCRIPT" 2>"$stderr_file" || exit_code=$?
+  # Run from tmpdir so git rev-parse fails and gate uses CWD from JSON
+  (cd "$tmpdir" && echo "$input" | bash "$GATE_SCRIPT" 2>"$stderr_file") || exit_code=$?
 
   if [ "$exit_code" -ne "$expected_exit" ]; then
     echo "FAIL: $name — expected exit $expected_exit, got $exit_code"

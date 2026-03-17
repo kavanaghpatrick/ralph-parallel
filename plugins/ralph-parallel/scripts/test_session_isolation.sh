@@ -16,7 +16,13 @@ set -uo pipefail
 # Isolate tests from parent environment (e.g., running inside a team dispatch)
 unset CLAUDE_CODE_AGENT_NAME 2>/dev/null || true
 unset CLAUDE_CODE_TEAM_NAME 2>/dev/null || true
+unset CLAUDE_PLUGIN_ROOT 2>/dev/null || true
 _RALPH_TMP="${TMPDIR:-/tmp}"
+
+# Prevent git from traversing above TMPDIR into the real repo.
+# Without this, git rev-parse in the hooks finds the real project root,
+# causing scan mode to pick up real dispatch states instead of test fixtures.
+export GIT_CEILING_DIRECTORIES="${_RALPH_TMP%/}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -166,7 +172,7 @@ assert_stdout_contains_json_block() {
 # Must cd into the tmpdir so git rev-parse fails and falls back to CWD from stdin JSON.
 # Usage: echo '{"session_id":"...","cwd":"$tmpdir",...}' | run_stop_hook "$tmpdir"
 run_stop_hook() {
-  local dir="${1:-/tmp}"
+  local dir="${1:-$_RALPH_TMP}"
   (cd "$dir" && env -u CLAUDE_CODE_AGENT_NAME -u CLAUDE_CODE_TEAM_NAME bash "$STOP_HOOK")
 }
 
@@ -343,9 +349,9 @@ test_T10_env_file_export() {
   local envfile; envfile=$(mktemp)
 
   echo "{\"session_id\":\"sess-X\",\"source\":\"startup\",\"cwd\":\"$tmpdir\"}" \
-    | (cd "$tmpdir" && env -u CLAUDE_CODE_AGENT_NAME -u CLAUDE_CODE_TEAM_NAME CLAUDE_ENV_FILE="$envfile" bash "$SESSION_HOOK") > /dev/null 2>&1
+    | (cd "$tmpdir" && env -u CLAUDE_CODE_AGENT_NAME -u CLAUDE_CODE_TEAM_NAME -u CLAUDE_PLUGIN_ROOT CLAUDE_ENV_FILE="$envfile" bash "$SESSION_HOOK") > /dev/null 2>&1
 
-  assert_file_contains "$envfile" "CLAUDE_SESSION_ID=sess-X" "env file should contain session ID"
+  assert_file_contains "$envfile" 'CLAUDE_SESSION_ID="sess-X"' "env file should contain session ID"
   rm -f "$envfile"; rm -rf "$tmpdir"
   end_test "CLAUDE_ENV_FILE export"
 }

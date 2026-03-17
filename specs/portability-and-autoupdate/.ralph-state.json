@@ -1,0 +1,13 @@
+{
+  "source": "spec",
+  "name": "portability-and-autoupdate",
+  "basePath": "specs/portability-and-autoupdate",
+  "phase": "implement",
+  "taskIndex": 0,
+  "totalTasks": 0,
+  "taskIteration": 1,
+  "maxTaskIterations": 5,
+  "globalIteration": 1,
+  "maxGlobalIterations": 100,
+  "awaitingApproval": true
+}

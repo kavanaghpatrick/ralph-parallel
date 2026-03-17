@@ -6,3 +6,5 @@ dist/
 build/
 .DS_Store
 plugins/ralph-parallel/specs/
+specs/.current-spec
+**/.progress.md
