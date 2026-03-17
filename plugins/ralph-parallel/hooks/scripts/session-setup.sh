@@ -97,6 +97,9 @@ fi
 # Error path: if jq fails, SESSION_ID="" = no session isolation (legacy behavior)
 INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null) || SESSION_ID=""
+if [ -n "$SESSION_ID" ] && ! printf '%s' "$SESSION_ID" | grep -qE '^[a-zA-Z0-9_-]+$'; then
+  SESSION_ID=""
+fi
 
 # Best-effort: export session_id for dispatch.md to read
 # Works on fresh start, broken on resume (#24775) -- auto-reclaim compensates
