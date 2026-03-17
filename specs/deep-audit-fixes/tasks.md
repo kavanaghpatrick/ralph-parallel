@@ -128,7 +128,7 @@ Focus: Fix all 3 critical and 5 high-severity findings. Skip tests first, verify
 
 ## Phase 2: MEDIUM Priority Fixes
 
-- [ ] 2.1 Add timeout command fallback (M1)
+- [x] 2.1 Add timeout command fallback (M1)
   - **Do**: In session-setup.sh, before the `timeout 15 git ...` call on line 68, add a check: `if ! command -v timeout >/dev/null 2>&1; then timeout() { shift; "$@"; }; fi`. This creates a no-op timeout function that just runs the command without a time limit if `timeout` is not available (common on macOS without coreutils).
   - **Files**: `plugins/ralph-parallel/hooks/scripts/session-setup.sh`
   - **Done when**: Script works on systems without `timeout` command
@@ -137,7 +137,7 @@ Focus: Fix all 3 critical and 5 high-severity findings. Skip tests first, verify
   - _Requirements: FR-10_
   - _Design: Component E_
 
-- [ ] 2.2 Query marketplace by name instead of [0] (M2)
+- [x] 2.2 Query marketplace by name instead of [0] (M2)
   - **Do**: In session-setup.sh line 59, change `jq -r '.[0].path // empty'` to `jq -r '.[] | select(.name == "ralph-parallel-marketplace" or .name == "ralph-parallel") | .path // empty' | head -1`. This finds the correct marketplace entry by name rather than assuming it's the first entry.
   - **Files**: `plugins/ralph-parallel/hooks/scripts/session-setup.sh`
   - **Done when**: Marketplace lookup works regardless of entry position in array

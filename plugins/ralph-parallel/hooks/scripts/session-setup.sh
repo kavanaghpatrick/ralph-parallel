@@ -56,13 +56,17 @@ if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
 
     # Read marketplace clone directory
     local mktplace_dir
-    mktplace_dir=$(jq -r '.[0].path // empty' "$HOME/.claude/plugins/known_marketplaces.json" 2>/dev/null) || return 0
+    mktplace_dir=$(jq -r '.[] | select(.name == "ralph-parallel-marketplace" or .name == "ralph-parallel") | .path // empty' "$HOME/.claude/plugins/known_marketplaces.json" 2>/dev/null | head -1) || return 0
     [ -n "$mktplace_dir" ] && [ -d "$mktplace_dir" ] || return 0
 
     # Read installed SHA
     local installed_sha
     installed_sha=$(jq -r '.[] | select(.name == "ralph-parallel") | .installedCommitSha // empty' "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null) || return 0
     [ -n "$installed_sha" ] || return 0
+
+    # Fallback: if timeout command is not available (e.g. macOS without coreutils),
+    # define a no-op version that just runs the command without a time limit.
+    if ! command -v timeout >/dev/null 2>&1; then timeout() { shift; "$@"; }; fi
 
     # Fetch latest from origin (with timeout to avoid blocking session start)
     timeout 15 git -C "$mktplace_dir" fetch origin --quiet < /dev/null 2>/dev/null || true
