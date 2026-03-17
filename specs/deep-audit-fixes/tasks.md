@@ -84,7 +84,7 @@ Focus: Fix all 3 critical and 5 high-severity findings. Skip tests first, verify
   - _Requirements: FR-8_
   - _Design: Component D_
 
-- [ ] 1.9 Replace here-strings with POSIX heredocs (H4a -- file-ownership-guard.sh)
+- [x] 1.9 Replace here-strings with POSIX heredocs (H4a -- file-ownership-guard.sh)
   - **Do**: Replace `done <<< "$OWNED_FILES"` on line 89 with a POSIX heredoc. Since the while loop sets `ALLOWED=true` which must propagate outside the loop, use a heredoc (not a pipe, which creates a subshell). Replace with: `done <<EOF_OWNED\n${OWNED_FILES}\nEOF_OWNED`
   - **Files**: `plugins/ralph-parallel/hooks/scripts/file-ownership-guard.sh`
   - **Done when**: No `<<<` appears in the file, and the file ownership check still works
