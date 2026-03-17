@@ -21,7 +21,7 @@ Focus: Fix all 3 critical and 5 high-severity findings. Skip tests first, verify
   - _Requirements: FR-1_
   - _Design: Component A_
 
-- [ ] 1.2 Harden _sanitize_cmd() in capture-baseline.sh (C1b)
+- [x] 1.2 Harden _sanitize_cmd() in capture-baseline.sh (C1b)
   - **Do**: Apply identical changes to `_sanitize_cmd()` in capture-baseline.sh (lines 19-37). Both copies must match exactly.
   - **Files**: `plugins/ralph-parallel/scripts/capture-baseline.sh`
   - **Done when**: Both `_sanitize_cmd` functions are identical between the two files
