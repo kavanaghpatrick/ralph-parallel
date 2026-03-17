@@ -232,7 +232,7 @@ Focus: Fix all 3 critical and 5 high-severity findings. Skip tests first, verify
   - **Done when**: No shellcheck errors (or shellcheck not available), all tests pass
   - **Commit**: `fix(audit): address shellcheck/lint findings` (if needed)
 
-- [ ] 4.2 [VERIFY] Final verification and PR
+- [x] 4.2 [VERIFY] Final verification and PR
   - **Do**: Run complete test suite one final time. Verify all 18 audit findings are addressed. Create PR referencing issue #11.
   - **Verify**: `python3 -m pytest plugins/ralph-parallel/scripts/ -q && bash plugins/ralph-parallel/hooks/scripts/test_gate.sh && bash plugins/ralph-parallel/hooks/scripts/test_teammate_idle_gate.sh && bash plugins/ralph-parallel/scripts/test_session_isolation.sh && bash plugins/ralph-parallel/scripts/test_stop_hook.sh`
   - **Done when**: All tests pass, PR created with issue reference
