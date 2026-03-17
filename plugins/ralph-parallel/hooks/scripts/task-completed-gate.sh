@@ -107,6 +107,13 @@ if [ -z "$COMPLETED_SPEC_TASK" ]; then
   exit 0
 fi
 
+# Validate COMPLETED_SPEC_TASK matches expected format (e.g., "1.1", "12.34")
+# This protects all downstream grep -E and sed patterns that interpolate this value.
+if ! printf '%s' "$COMPLETED_SPEC_TASK" | grep -qE '^[0-9]+\.[0-9]+$'; then
+  # Invalid format — allow through rather than risk regex injection
+  exit 0
+fi
+
 # --- Extract verify command for this SINGLE task from tasks.md ---
 VERIFY_CMD=""
 IN_TASK=false

@@ -30,7 +30,7 @@ Focus: Fix all 3 critical and 5 high-severity findings. Skip tests first, verify
   - _Requirements: FR-1_
   - _Design: Component A_
 
-- [ ] 1.3 Validate COMPLETED_SPEC_TASK format in task-completed-gate.sh (C2a)
+- [x] 1.3 Validate COMPLETED_SPEC_TASK format in task-completed-gate.sh (C2a)
   - **Do**: After line 98 where COMPLETED_SPEC_TASK is extracted, add validation that it matches `^[0-9]+\.[0-9]+$`. If not, exit 0 (allow through). This protects all subsequent grep -E and sed uses on lines 110, 151, 233. Also change `grep -qE "^\s*- \[ \] ${TASK_ID}\b"` to use `grep -F` where the TASK_ID is used as a fixed string in teammate-idle-gate.sh.
   - **Files**: `plugins/ralph-parallel/hooks/scripts/task-completed-gate.sh`
   - **Done when**: A TASK_ID of `1.1` passes validation, a TASK_ID of `$(rm -rf /)` is rejected
