@@ -17,13 +17,18 @@ set -euo pipefail
 _sanitize_cmd() {
   local cmd="$1"
   # Reject null bytes
-  if printf '%s' "$cmd" | grep -qP '\x00' 2>/dev/null; then
+  if [ "$(printf '%s' "$cmd" | wc -c)" != "$(printf '%s' "$cmd" | tr -d '\0' | wc -c)" ]; then
     echo "ralph-parallel: REJECTED command (null bytes): $cmd" >&2
     return 1
   fi
   # Reject command substitution attempts
   if printf '%s' "$cmd" | grep -qE '\$\(|`' 2>/dev/null; then
     echo "ralph-parallel: REJECTED command (substitution): $cmd" >&2
+    return 1
+  fi
+  # Reject command separators and pipes (; | && ||)
+  if printf '%s' "$cmd" | grep -qE ';|\||\&\&|\|\|' 2>/dev/null; then
+    echo "ralph-parallel: REJECTED command (separator/pipe): $cmd" >&2
     return 1
   fi
   # Reject path traversal
@@ -102,6 +107,13 @@ if [ -z "$COMPLETED_SPEC_TASK" ]; then
   exit 0
 fi
 
+# Validate COMPLETED_SPEC_TASK matches expected format (e.g., "1.1", "12.34")
+# This protects all downstream grep -E and sed patterns that interpolate this value.
+if ! printf '%s' "$COMPLETED_SPEC_TASK" | grep -qE '^[0-9]+\.[0-9]+$'; then
+  # Invalid format — allow through rather than risk regex injection
+  exit 0
+fi
+
 # --- Extract verify command for this SINGLE task from tasks.md ---
 VERIFY_CMD=""
 IN_TASK=false
@@ -117,7 +129,7 @@ while IFS= read -r line; do
   fi
 
   if [ "$IN_TASK" = true ] && echo "$line" | grep -qE "\*\*Verify\*\*:"; then
-    VERIFY_CMD=$(echo "$line" | sed 's/.*\*\*Verify\*\*:[[:space:]]*//' | sed 's/`//g' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    VERIFY_CMD=$(echo "$line" | sed 's/.*\*\*Verify\*\*:[[:space:]]*//' | sed 's/^`//;s/`$//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
     break
   fi
 done < "$SPEC_DIR/tasks.md"
@@ -235,7 +247,7 @@ while IFS= read -r fline; do
   fi
   if [ "$IN_TASK" = true ] && echo "$fline" | grep -qE "^\s*- \[.\] [0-9]"; then break; fi
   if [ "$IN_TASK" = true ] && echo "$fline" | grep -qE "\*\*Files\*\*:"; then
-    TASK_FILES=$(echo "$fline" | sed 's/.*\*\*Files\*\*:[[:space:]]*//' | sed 's/`//g' | sed 's/ *(NEW)//g; s/ *(MODIFY)//g; s/ *(CREATE)//g' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    TASK_FILES=$(echo "$fline" | sed 's/.*\*\*Files\*\*:[[:space:]]*//' | sed 's/^`//;s/`$//' | sed 's/ *(NEW)//g; s/ *(MODIFY)//g; s/ *(CREATE)//g' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
     break
   fi
 done < "$SPEC_DIR/tasks.md"
@@ -246,15 +258,18 @@ case "$(echo "$TASK_FILES" | tr '[:upper:]' '[:lower:]')" in
 esac
 
 if [ -n "$TASK_FILES" ]; then
+  OLDIFS="$IFS"
+  IFS=','
   MISSING=""
-  IFS=',' read -ra FILE_LIST <<< "$TASK_FILES"
-  for f in "${FILE_LIST[@]}"; do
+  for f in $TASK_FILES; do
+    IFS="$OLDIFS"
     f=$(echo "$f" | xargs)  # trim whitespace
     [ -z "$f" ] && continue
     if [ ! -e "$PROJECT_ROOT/$f" ]; then
       MISSING="$MISSING $f"
     fi
   done
+  IFS="$OLDIFS"
   if [ -n "$MISSING" ]; then
     echo "SUPPLEMENTAL CHECK FAILED: file existence" >&2
     echo "Missing files:$MISSING" >&2
@@ -295,11 +310,11 @@ parse_test_count() {
   local count=""
 
   # Jest/Vitest: "Tests:  5 passed" or "5 passed"
-  count=$(echo "$output" | grep -oE 'Tests:\s+[0-9]+ passed' | grep -oE '[0-9]+' | head -1)
+  count=$(echo "$output" | grep -oE 'Tests:[[:space:]]+[0-9]+ passed' | grep -oE '[0-9]+' | head -1)
   if [ -n "$count" ]; then echo "$count"; return; fi
 
   # Pytest: "5 passed"
-  count=$(echo "$output" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' | head -1)
+  count=$(echo "$output" | grep -oE '(^|[[:space:]])[0-9]+ passed' | grep -oE '[0-9]+' | head -1)
   if [ -n "$count" ]; then echo "$count"; return; fi
 
   # Cargo test: "test result: ok. 5 passed"
@@ -307,7 +322,7 @@ parse_test_count() {
   if [ -n "$count" ]; then echo "$count"; return; fi
 
   # Go test: count "ok" lines
-  count=$(echo "$output" | grep -cE '^ok\s+' 2>/dev/null || echo 0)
+  count=$(echo "$output" | grep -cE '^ok[[:space:]]+' 2>/dev/null || echo 0)
   if [ "$count" -gt 0 ] 2>/dev/null; then echo "$count"; return; fi
 
   # Generic fallback: count lines containing pass/ok/✓
@@ -360,7 +375,8 @@ if [ -n "$TEST_CMD" ]; then
       fi
     else
       # Tests passed — do baseline count comparison
-      TEST_OUTPUT_CLEAN=$(printf '%s' "$TEST_OUTPUT" | sed $'s/\x1b\\[[0-9;]*m//g')
+      ESC=$(printf '\033')
+      TEST_OUTPUT_CLEAN=$(printf '%s' "$TEST_OUTPUT" | sed "s/${ESC}\[[0-9;]*m//g")
 
       if [ "$BASELINE_HARD_FAIL" = "true" ]; then
         echo "ralph-parallel: Tests now PASSING (improved from broken baseline)" >&2

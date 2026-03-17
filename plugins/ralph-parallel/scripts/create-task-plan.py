@@ -113,7 +113,7 @@ def main():
     args = parser.parse_args()
 
     try:
-        with open(args.partition_file) as f:
+        with open(args.partition_file, encoding='utf-8') as f:
             partition = json.load(f)
     except FileNotFoundError:
         print(f"Error: Partition file not found: {args.partition_file}",

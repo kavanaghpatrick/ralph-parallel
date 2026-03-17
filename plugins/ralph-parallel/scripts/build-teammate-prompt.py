@@ -273,7 +273,7 @@ def main():
 
     # Read partition JSON
     if args.partition_file:
-        with open(args.partition_file) as f:
+        with open(args.partition_file, encoding='utf-8') as f:
             partition = json.load(f)
     else:
         partition = json.load(sys.stdin)

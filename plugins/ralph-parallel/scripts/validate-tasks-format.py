@@ -383,7 +383,7 @@ def main():
         print(f"Error: {path} not found", file=sys.stderr)
         sys.exit(1)
 
-    content = path.read_text()
+    content = path.read_text(encoding='utf-8')
     if not content.strip():
         print(f"Error: {path} is empty", file=sys.stderr)
         sys.exit(1)

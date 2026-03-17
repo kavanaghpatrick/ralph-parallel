@@ -10,7 +10,7 @@
     {
       "name": "ralph-parallel",
       "description": "Parallel spec execution via Claude Code Agent Teams. Analyzes tasks from ralph-specum specs, partitions into parallelizable groups, and dispatches to Agent Teams teammates.",
-      "version": "0.2.3",
+      "version": "0.2.4",
       "author": {
         "name": "patrickkavanagh"
       },

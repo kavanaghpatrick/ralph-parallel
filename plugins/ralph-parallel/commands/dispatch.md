@@ -66,7 +66,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/parse-and-partition.py \
 ```
 
 **Exit codes**:
-- 0: Success — JSON partition on stdout. Save to a variable AND save to /tmp/$specName-partition.json for use by build-teammate-prompt.py in Step 6.
+- 0: Success — JSON partition on stdout. Save to a variable AND save to ${TMPDIR:-/tmp}/$specName-partition.json for use by build-teammate-prompt.py in Step 6.
 - 1: tasks.md format error → Display stderr diagnostics (parse-and-partition.py now reports specific format issues with line numbers and fix suggestions). Do NOT just say "Run /ralph-specum:tasks" — the diagnostics will indicate the actual problem.
 - 2: All complete → "All tasks complete. Nothing to dispatch."
 - 3: Single task → "Only 1 task remaining. Run /ralph-specum:implement instead."
@@ -93,7 +93,7 @@ Display the output to the user. If `--dry-run`: STOP here.
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/write-dispatch-state.py \
-  --partition-file /tmp/$specName-partition.json \
+  --partition-file ${TMPDIR:-/tmp}/$specName-partition.json \
   --strategy $strategy \
   --max-teammates $maxTeammates \
   --spec-dir specs/$specName
@@ -133,7 +133,7 @@ calls must equal the total number of tasks across ALL groups plus verify tasks.
 2. Generate task plan:
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/create-task-plan.py \
-  --partition-file /tmp/$specName-partition.json
+  --partition-file ${TMPDIR:-/tmp}/$specName-partition.json
 ```
 
 3. Parse the JSON array output. For each entry IN ORDER (index 0, 1, 2, ...):
@@ -175,7 +175,7 @@ BASELINE_TEST_COUNT=$(jq -r '.baselineSnapshot.testCount // 0' specs/$specName/.
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/build-teammate-prompt.py \
-  --partition-file /tmp/$specName-partition.json \
+  --partition-file ${TMPDIR:-/tmp}/$specName-partition.json \
   --group-index $i \
   --spec-name $specName \
   --project-root $projectRoot \

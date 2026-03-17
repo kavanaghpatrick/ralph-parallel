@@ -18,14 +18,22 @@ set -euo pipefail
 
 _sanitize_cmd() {
   local cmd="$1"
-  if printf '%s' "$cmd" | grep -qP '\x00' 2>/dev/null; then
+  # Reject null bytes
+  if [ "$(printf '%s' "$cmd" | wc -c)" != "$(printf '%s' "$cmd" | tr -d '\0' | wc -c)" ]; then
     echo "ralph-parallel: REJECTED command (null bytes): $cmd" >&2
     return 1
   fi
+  # Reject command substitution attempts
   if printf '%s' "$cmd" | grep -qE '\$\(|`' 2>/dev/null; then
     echo "ralph-parallel: REJECTED command (substitution): $cmd" >&2
     return 1
   fi
+  # Reject command separators and pipes (; | && ||)
+  if printf '%s' "$cmd" | grep -qE ';|\||\&\&|\|\|' 2>/dev/null; then
+    echo "ralph-parallel: REJECTED command (separator/pipe): $cmd" >&2
+    return 1
+  fi
+  # Reject path traversal
   if printf '%s' "$cmd" | grep -qF '..' 2>/dev/null; then
     echo "ralph-parallel: REJECTED command (path traversal): $cmd" >&2
     return 1
@@ -37,7 +45,7 @@ _sanitize_cmd() {
 
 DISPATCH_STATE=""
 
-while [[ $# -gt 0 ]]; do
+while [ $# -gt 0 ]; do
   case "$1" in
     --dispatch-state)
       DISPATCH_STATE="$2"
@@ -107,7 +115,8 @@ if ! _sanitize_cmd "$TEST_CMD"; then
   exit 0
 fi
 TEST_OUTPUT=$(eval "$TEST_CMD" 2>&1) && TEST_EXIT=0 || TEST_EXIT=$?
-TEST_OUTPUT=$(printf '%s' "$TEST_OUTPUT" | sed $'s/\x1b\\[[0-9;]*m//g')
+ESC=$(printf '\033')
+TEST_OUTPUT=$(printf '%s' "$TEST_OUTPUT" | sed "s/${ESC}\[[0-9;]*m//g")
 
 if [ "$TEST_EXIT" -ne 0 ]; then
   echo "ralph-parallel: Test command failed (exit $TEST_EXIT) — baseline will be -1" >&2
@@ -131,11 +140,11 @@ parse_test_count() {
   local count=""
 
   # Jest/Vitest: "Tests:  5 passed" or "5 passed"
-  count=$(echo "$output" | grep -oE 'Tests:\s+[0-9]+ passed' | grep -oE '[0-9]+' | head -1)
+  count=$(echo "$output" | grep -oE 'Tests:[[:space:]]+[0-9]+ passed' | grep -oE '[0-9]+' | head -1)
   if [ -n "$count" ]; then echo "$count"; return; fi
 
   # Pytest: "5 passed"
-  count=$(echo "$output" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' | head -1)
+  count=$(echo "$output" | grep -oE '(^|[[:space:]])[0-9]+ passed' | grep -oE '[0-9]+' | head -1)
   if [ -n "$count" ]; then echo "$count"; return; fi
 
   # Cargo test: "test result: ok. 5 passed"
@@ -143,7 +152,7 @@ parse_test_count() {
   if [ -n "$count" ]; then echo "$count"; return; fi
 
   # Go test: count "ok" lines
-  count=$(echo "$output" | grep -cE '^ok\s+' 2>/dev/null || echo 0)
+  count=$(echo "$output" | grep -cE '^ok[[:space:]]+' 2>/dev/null || echo 0)
   if [ "$count" -gt 0 ] 2>/dev/null; then echo "$count"; return; fi
 
   # Generic fallback: count lines containing pass/ok/checkmark

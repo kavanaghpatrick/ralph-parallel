@@ -2,6 +2,7 @@
 # Integration tests for teammate-idle-gate.sh
 set -euo pipefail
 
+_RALPH_TMP="${TMPDIR:-/tmp}"
 GATE_SCRIPT="$(cd "$(dirname "$0")" && pwd)/teammate-idle-gate.sh"
 PASS=0
 FAIL=0
@@ -74,7 +75,7 @@ EOF
 
 setup_uncompleted_tasks() {
   local dir="$1"
-  rm -f "/tmp/ralph-idle-test-spec-test-group" 2>/dev/null || true
+  rm -f "$_RALPH_TMP/ralph-idle-test-spec-test-group" 2>/dev/null || true
   cat > "$dir/specs/test-spec/.dispatch-state.json" <<'EOF'
 {"status":"dispatched","dispatchedAt":"2026-03-04T00:00:00Z",
  "groups":[{"name":"test-group","tasks":["1.1","1.2"]}],
@@ -89,7 +90,7 @@ EOF
 setup_safety_valve() {
   local dir="$1"
   # Pre-seed counter at MAX_IDLE_BLOCKS (5)
-  echo "5:dispatched:2026-03-04T00:00:00Z" > "/tmp/ralph-idle-test-spec-test-group"
+  echo "5:dispatched:2026-03-04T00:00:00Z" > "$_RALPH_TMP/ralph-idle-test-spec-test-group"
   cat > "$dir/specs/test-spec/.dispatch-state.json" <<'EOF'
 {"status":"dispatched","dispatchedAt":"2026-03-04T00:00:00Z",
  "groups":[{"name":"test-group","tasks":["1.1","1.2"]}],
@@ -104,7 +105,7 @@ EOF
 setup_counter_reset() {
   local dir="$1"
   # Counter from OLD dispatch (different dispatchedAt) — should reset to 0
-  echo "10:dispatched:2026-01-01T00:00:00Z" > "/tmp/ralph-idle-test-spec-test-group"
+  echo "10:dispatched:2026-01-01T00:00:00Z" > "$_RALPH_TMP/ralph-idle-test-spec-test-group"
   cat > "$dir/specs/test-spec/.dispatch-state.json" <<'EOF'
 {"status":"dispatched","dispatchedAt":"2026-03-04T00:00:00Z",
  "groups":[{"name":"test-group","tasks":["1.1","1.2"]}],
@@ -118,7 +119,7 @@ EOF
 
 setup_completed_groups_bypass() {
   local dir="$1"
-  rm -f "/tmp/ralph-idle-test-spec-test-group" 2>/dev/null || true
+  rm -f "$_RALPH_TMP/ralph-idle-test-spec-test-group" 2>/dev/null || true
   cat > "$dir/specs/test-spec/.dispatch-state.json" <<'EOF'
 {"status":"dispatched","dispatchedAt":"2026-03-04T00:00:00Z",
  "groups":[{"name":"test-group","tasks":["1.1","1.2"]}],
@@ -157,7 +158,7 @@ run_test "non-dispatch team — allow idle"            0  ""                    
 
 # ── Cleanup ──────────────────────────────────────────────────
 
-rm -f "/tmp/ralph-idle-test-spec-test-group" 2>/dev/null || true
+rm -f "$_RALPH_TMP/ralph-idle-test-spec-test-group" 2>/dev/null || true
 
 # ── Summary ──────────────────────────────────────────────────
 

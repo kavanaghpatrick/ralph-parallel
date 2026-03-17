@@ -13,6 +13,7 @@
 #   stop_hook_active, last_assistant_message, session_id, cwd
 
 set -euo pipefail
+_RALPH_TMP="${TMPDIR:-/tmp}"
 
 # --- Helper functions ---
 
@@ -41,9 +42,14 @@ cleanup_and_allow() {
   exit 0
 }
 
+# NOTE: Counter read-modify-write is not atomic. Two concurrent sessions could
+# read the same value and both increment to N+1 instead of N+2. This is
+# acceptable because the counter is a safety valve, not a precise count.
+# Worst case: one extra block cycle.
+
 # Read and validate block counter; returns "count" or "0" if reset needed
 # Error path: any read/parse failure returns "0" (treat as first block).
-# This means /tmp permission denied or corrupt file = block still works,
+# This means temp dir permission denied or corrupt file = block still works,
 # just without counter tracking (will never hit safety valve).
 read_block_counter() {
   local counter_file="$1"
@@ -72,7 +78,7 @@ read_block_counter() {
 }
 
 # Write block counter (non-fatal on failure)
-# Error path: if /tmp write fails (permission denied, disk full), || true
+# Error path: if temp dir write fails (permission denied, disk full), || true
 # ensures blocking still works — just without counter tracking, so the
 # safety valve (MAX_BLOCKS) won't trigger and the hook blocks indefinitely
 # until dispatch reaches terminal status.
@@ -96,8 +102,10 @@ write_heartbeat() {
   if [ -z "$ts" ]; then
     return 0  # Skip heartbeat write if date fails; blocking still works
   fi
-  jq --arg ts "$ts" '.lastHeartbeat = $ts' "$state_file" > "${state_file}.tmp.$$" 2>/dev/null \
-    && mv "${state_file}.tmp.$$" "$state_file" 2>/dev/null || true
+  _tmpf=$(mktemp "${state_file}.XXXXXX" 2>/dev/null) \
+    && jq --arg ts "$ts" '.lastHeartbeat = $ts' "$state_file" > "$_tmpf" 2>/dev/null \
+    && mv "$_tmpf" "$state_file" 2>/dev/null \
+    || { rm -f "${_tmpf:-}" 2>/dev/null; true; }
 }
 
 _sanitize_name() {
@@ -121,6 +129,9 @@ _sanitize_name() {
 INPUT=$(cat)
 CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null) || CWD=""
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null) || SESSION_ID=""
+if [ -n "$SESSION_ID" ] && ! printf '%s' "$SESSION_ID" | grep -qE '^[a-zA-Z0-9_-]+$'; then
+  SESSION_ID=""
+fi
 STOP_HOOK_ACTIVE=$(echo "$INPUT" | jq -r '.stop_hook_active // false' 2>/dev/null) || STOP_HOOK_ACTIVE="false"
 
 MAX_BLOCKS="${RALPH_MAX_STOP_BLOCKS:-3}"
@@ -216,7 +227,7 @@ STATUS=$(echo "$STATE_JSON" | jq -r '.status // "unknown"') || exit 0
 DISPATCHED_AT=$(echo "$STATE_JSON" | jq -r '.dispatchedAt // "unknown"') || DISPATCHED_AT="unknown"
 
 # --- Block counter file path ---
-COUNTER_FILE="/tmp/ralph-stop-${SPEC_NAME}-${SESSION_ID}"
+COUNTER_FILE="$_RALPH_TMP/ralph-stop-${SPEC_NAME}-${SESSION_ID}"
 
 # --- Terminal status check ---
 # "merged" falls through to completion check (prevents bypass).

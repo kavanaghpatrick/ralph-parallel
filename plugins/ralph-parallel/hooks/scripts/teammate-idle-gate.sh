@@ -10,6 +10,7 @@
 #   2 = block idle + send stderr as feedback
 
 set -euo pipefail
+_RALPH_TMP="${TMPDIR:-/tmp}"
 
 _sanitize_name() {
   local name="$1"
@@ -25,6 +26,10 @@ _sanitize_name() {
 }
 
 # --- Counter functions (inlined from dispatch-coordinator.sh pattern) ---
+# NOTE: Counter read-modify-write is not atomic. Two concurrent sessions could
+# read the same value and both increment to N+1 instead of N+2. This is
+# acceptable because the counter is a safety valve, not a precise count.
+# Worst case: one extra block cycle.
 
 read_block_counter() {
   local counter_file="$1"
@@ -68,13 +73,21 @@ TEAMMATE_NAME=$(echo "$INPUT" | jq -r '.teammate_name // empty' 2>/dev/null) || 
 CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null) || CWD=""
 
 # Not a dispatch team — allow idle
-if [ -z "$TEAM_NAME" ] || [[ "$TEAM_NAME" != *-parallel ]]; then
+if [ -z "$TEAM_NAME" ]; then
   exit 0
 fi
+case "$TEAM_NAME" in
+  *-parallel) ;;
+  *) exit 0 ;;
+esac
 
 SPEC_NAME="${TEAM_NAME%-parallel}"
 SPEC_NAME=$(_sanitize_name "$SPEC_NAME") || exit 0
-PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || PROJECT_ROOT="${CWD:-$(pwd)}"
+if [ -n "$CWD" ] && [ -d "$CWD" ]; then
+  PROJECT_ROOT="$CWD"
+else
+  PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || PROJECT_ROOT="$(pwd)"
+fi
 SPEC_DIR="$PROJECT_ROOT/specs/$SPEC_NAME"
 DISPATCH_STATE="$SPEC_DIR/.dispatch-state.json"
 
@@ -89,7 +102,7 @@ DISPATCHED_AT=$(jq -r '.dispatchedAt // "unknown"' "$DISPATCH_STATE" 2>/dev/null
 
 MAX_IDLE_BLOCKS="${RALPH_MAX_IDLE_BLOCKS:-5}"
 TEAMMATE_NAME_SAFE=$(_sanitize_name "$TEAMMATE_NAME" 2>/dev/null) || TEAMMATE_NAME_SAFE="unknown"
-COUNTER_FILE="/tmp/ralph-idle-${SPEC_NAME}-${TEAMMATE_NAME_SAFE}"
+COUNTER_FILE="$_RALPH_TMP/ralph-idle-${SPEC_NAME}-${TEAMMATE_NAME_SAFE}"
 
 # --- completedGroups bypass (authoritative source, checked before tasks.md) ---
 TEAMMATE_GROUP_DONE=$(jq -r --arg name "$TEAMMATE_NAME" \
@@ -98,6 +111,7 @@ TEAMMATE_GROUP_DONE=$(jq -r --arg name "$TEAMMATE_NAME" \
 
 if [ "$TEAMMATE_GROUP_DONE" = "true" ]; then
   echo "ralph-parallel: Group '$TEAMMATE_NAME' in completedGroups — allowing idle" >&2
+  rm -f "$COUNTER_FILE" 2>/dev/null
   exit 0
 fi
 
@@ -120,15 +134,23 @@ fi
 UNCOMPLETED=""
 while IFS= read -r TASK_ID; do
   [ -z "$TASK_ID" ] && continue
-  # Check if task line has [ ] (uncompleted) vs [x] (completed)
-  if grep -qE "^\s*- \[ \] ${TASK_ID}\b" "$TASKS_MD"; then
-    DESC=$(grep -oE "^\s*- \[ \] ${TASK_ID}\s+.*" "$TASKS_MD" | sed "s/.*${TASK_ID}\s*//" | head -1)
-    UNCOMPLETED="${UNCOMPLETED}  - ${TASK_ID}: ${DESC}\n"
+  # Validate TASK_ID format: must be digits.digits (e.g., 1.1, 2.13)
+  if ! printf '%s' "$TASK_ID" | grep -qE '^[0-9]+\.[0-9]+$'; then
+    continue
   fi
-done <<< "$GROUP_TASKS"
+  # Check if task line has [ ] (uncompleted) vs [x] (completed)
+  if grep -qE "^[[:space:]]*- \[ \] ${TASK_ID}\b" "$TASKS_MD"; then
+    DESC=$(grep -oE "^[[:space:]]*- \[ \] ${TASK_ID}[[:space:]]+.*" "$TASKS_MD" | sed "s/.*${TASK_ID}[[:space:]]*//" | head -1)
+    UNCOMPLETED="${UNCOMPLETED}  - ${TASK_ID}: ${DESC}
+"
+  fi
+done <<EOF_TASKS
+${GROUP_TASKS}
+EOF_TASKS
 
 if [ -z "$UNCOMPLETED" ]; then
   # All group tasks complete in tasks.md — allow idle
+  rm -f "$COUNTER_FILE" 2>/dev/null
   exit 0
 fi
 
@@ -146,6 +168,6 @@ NEW_COUNT=$((BLOCK_COUNT + 1))
 write_block_counter "$COUNTER_FILE" "$NEW_COUNT" "$STATUS" "$DISPATCHED_AT"
 
 echo "Continue working. You have uncompleted tasks (block $NEW_COUNT/$MAX_IDLE_BLOCKS):" >&2
-echo -e "$UNCOMPLETED" >&2
+printf '%s' "$UNCOMPLETED" >&2
 echo "Claim the next uncompleted task, implement it, and mark it complete." >&2
 exit 2

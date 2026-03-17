@@ -37,7 +37,7 @@ def main():
 
         # Read dispatch-state.json
         try:
-            with open(args.dispatch_state, 'r') as f:
+            with open(args.dispatch_state, 'r', encoding='utf-8') as f:
                 state = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError) as e:
             print(json.dumps({"error": str(e), "marked": 0,
@@ -92,11 +92,11 @@ def main():
         lock_path = args.tasks_md + '.lock'
         lock_fd = None
         try:
-            lock_fd = open(lock_path, 'w')
+            lock_fd = open(lock_path, 'w', encoding='utf-8')
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
 
             # Read tasks.md
-            with open(args.tasks_md, 'r') as f:
+            with open(args.tasks_md, 'r', encoding='utf-8') as f:
                 content = f.read()
 
             marked = 0
@@ -143,7 +143,7 @@ def main():
 
             # Write updated content back (unless --dry-run)
             if marked > 0 and not args.dry_run:
-                with open(args.tasks_md, 'w') as f:
+                with open(args.tasks_md, 'w', encoding='utf-8') as f:
                     f.write(content)
         finally:
             if lock_fd:

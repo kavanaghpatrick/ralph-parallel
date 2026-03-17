@@ -36,10 +36,77 @@ if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
   fi
 fi
 
+# Auto-update notification: check if a newer version is available upstream
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+  _ralph_update_check() {
+    local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/ralph-parallel"
+    mkdir -p "$cache_dir" 2>/dev/null || return 0
+    local cache_file="$cache_dir/last_update_check"
+
+    # 24-hour cache: skip if checked recently
+    if [ -f "$cache_file" ]; then
+      local last_check now_epoch
+      last_check=$(cat "$cache_file" 2>/dev/null) || last_check=0
+      now_epoch=$(date +%s 2>/dev/null) || now_epoch=0
+      local age=$(( now_epoch - last_check ))
+      if [ "$age" -lt 86400 ] 2>/dev/null; then
+        return 0
+      fi
+    fi
+
+    # Read marketplace clone directory
+    local mktplace_dir
+    mktplace_dir=$(jq -r '.[] | select(.name == "ralph-parallel-marketplace" or .name == "ralph-parallel") | .path // empty' "$HOME/.claude/plugins/known_marketplaces.json" 2>/dev/null | head -1) || return 0
+    [ -n "$mktplace_dir" ] && [ -d "$mktplace_dir" ] || return 0
+
+    # Read installed SHA
+    local installed_sha
+    installed_sha=$(jq -r '.[] | select(.name == "ralph-parallel") | .installedCommitSha // empty' "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null) || return 0
+    [ -n "$installed_sha" ] || return 0
+
+    # Fallback: if timeout command is not available (e.g. macOS without coreutils),
+    # define a no-op version that just runs the command without a time limit.
+    if ! command -v timeout >/dev/null 2>&1; then timeout() { shift; "$@"; }; fi
+
+    # Fetch latest from origin (with timeout to avoid blocking session start)
+    timeout 15 git -C "$mktplace_dir" fetch origin --quiet < /dev/null 2>/dev/null || true
+
+    # Update cache timestamp after fetch (regardless of comparison result)
+    date +%s > "$cache_file" 2>/dev/null || true
+
+    # Compare installed SHA against origin/HEAD
+    local remote_sha
+    remote_sha=$(git -C "$mktplace_dir" rev-parse origin/HEAD 2>/dev/null) || return 0
+    [ -n "$remote_sha" ] || return 0
+
+    # Check both 7-char prefix and full SHA
+    local installed_prefix="${installed_sha:0:7}"
+    local remote_prefix="${remote_sha:0:7}"
+    if [ "$installed_sha" = "$remote_sha" ] || [ "$installed_prefix" = "$remote_prefix" ]; then
+      return 0
+    fi
+
+    # Validate installed SHA exists (may be orphaned/garbage-collected)
+    if ! git -C "$mktplace_dir" cat-file -e "$installed_sha" 2>/dev/null; then return 0; fi
+
+    # Count commits behind
+    local behind
+    behind=$(git -C "$mktplace_dir" rev-list --count "${installed_sha}..origin/HEAD" 2>/dev/null) || return 0
+    if [ "$behind" -gt 0 ] 2>/dev/null; then
+      echo "ralph-parallel: Update available ($behind commits behind). Run: claude plugin update ralph-parallel@ralph-parallel"
+    fi
+  }
+  _ralph_update_check 2>/dev/null || true
+  unset -f _ralph_update_check
+fi
+
 # Read hook input (must be first -- stdin is consumed once)
 # Error path: if jq fails, SESSION_ID="" = no session isolation (legacy behavior)
 INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null) || SESSION_ID=""
+if [ -n "$SESSION_ID" ] && ! printf '%s' "$SESSION_ID" | grep -qE '^[a-zA-Z0-9_-]+$'; then
+  SESSION_ID=""
+fi
 
 # Best-effort: export session_id for dispatch.md to read
 # Works on fresh start, broken on resume (#24775) -- auto-reclaim compensates
@@ -138,7 +205,7 @@ if [ "$DISPATCH_ACTIVE" = true ]; then
         # This is the safe default: reclaiming a live dispatch is recoverable
         # (coordinator re-stamps on next session), while failing to reclaim a
         # dead dispatch would permanently trap the user.
-        HEARTBEAT_EPOCH=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$HEARTBEAT" "+%s" 2>/dev/null) \
+        HEARTBEAT_EPOCH=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$HEARTBEAT" "+%s" 2>/dev/null) \
           || HEARTBEAT_EPOCH=$(date -d "$HEARTBEAT" "+%s" 2>/dev/null) \
           || HEARTBEAT_EPOCH=0
         NOW_EPOCH=$(date +%s 2>/dev/null) || NOW_EPOCH=0
@@ -155,10 +222,11 @@ if [ "$DISPATCH_ACTIVE" = true ]; then
         # Error path: if jq/mv fails, reclaim silently fails. Session continues
         # without coordinator ownership — stop hook won't block for this session
         # (coordinatorSessionId mismatch), which is safe (user can re-dispatch).
-        jq --arg sid "$SESSION_ID" '.coordinatorSessionId = $sid' "$DISPATCH_FILE" > "${DISPATCH_FILE}.tmp.$$" 2>/dev/null \
-          && mv "${DISPATCH_FILE}.tmp.$$" "$DISPATCH_FILE" 2>/dev/null \
+        _tmpf=$(mktemp "${DISPATCH_FILE}.XXXXXX" 2>/dev/null) \
+          && jq --arg sid "$SESSION_ID" '.coordinatorSessionId = $sid' "$DISPATCH_FILE" > "$_tmpf" 2>/dev/null \
+          && mv "$_tmpf" "$DISPATCH_FILE" 2>/dev/null \
           && echo "ralph-parallel: Auto-reclaimed dispatch for '$ACTIVE_SPEC' (session changed)" \
-          || echo "ralph-parallel: Warning: failed to auto-reclaim dispatch for '$ACTIVE_SPEC'"
+          || { rm -f "${_tmpf:-}" 2>/dev/null; echo "ralph-parallel: Warning: failed to auto-reclaim dispatch for '$ACTIVE_SPEC'"; }
       fi
     elif [ -z "$COORD_SID" ] && [ "$TEAM_EXISTS" = true ]; then
       # Distinguish explicitly released (null) from missing (legacy)
@@ -167,10 +235,11 @@ if [ "$DISPATCH_ACTIVE" = true ]; then
         # Legacy dispatch (field missing) -- stamp current session
         # Error path: if write fails, dispatch stays without coordinatorSessionId.
         # Stop hook treats this as ambiguous ownership = still blocks (safe).
-        jq --arg sid "$SESSION_ID" '.coordinatorSessionId = $sid' "$DISPATCH_FILE" > "${DISPATCH_FILE}.tmp.$$" 2>/dev/null \
-          && mv "${DISPATCH_FILE}.tmp.$$" "$DISPATCH_FILE" 2>/dev/null \
+        _tmpf=$(mktemp "${DISPATCH_FILE}.XXXXXX" 2>/dev/null) \
+          && jq --arg sid "$SESSION_ID" '.coordinatorSessionId = $sid' "$DISPATCH_FILE" > "$_tmpf" 2>/dev/null \
+          && mv "$_tmpf" "$DISPATCH_FILE" 2>/dev/null \
           && echo "ralph-parallel: Stamped session ID on legacy dispatch for '$ACTIVE_SPEC'" \
-          || echo "ralph-parallel: Warning: failed to stamp session ID on dispatch for '$ACTIVE_SPEC'"
+          || { rm -f "${_tmpf:-}" 2>/dev/null; echo "ralph-parallel: Warning: failed to stamp session ID on dispatch for '$ACTIVE_SPEC'"; }
       else
         echo "ralph-parallel: Dispatch '$ACTIVE_SPEC' was explicitly released (coordinatorSessionId: null). Skipping auto-claim."
       fi
@@ -188,11 +257,12 @@ if [ "$DISPATCH_ACTIVE" = true ]; then
     # Error path: if stale marking fails, stop hook will still see "dispatched"
     # status + no team = scan mode allows stop (TEAM_LOST + !TEAM_NAME = exit 0).
     STALE_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) || STALE_TS="1970-01-01T00:00:00Z"
-    jq --arg reason "team_lost" --arg ts "$STALE_TS" \
-      '.status = "stale" | .staleReason = $reason | .staleSince = $ts' \
-      "$DISPATCH_FILE" > "${DISPATCH_FILE}.tmp.$$" 2>/dev/null \
-      && mv "${DISPATCH_FILE}.tmp.$$" "$DISPATCH_FILE" 2>/dev/null \
-      || true
+    _tmpf=$(mktemp "${DISPATCH_FILE}.XXXXXX" 2>/dev/null) \
+      && jq --arg reason "team_lost" --arg ts "$STALE_TS" \
+        '.status = "stale" | .staleReason = $reason | .staleSince = $ts' \
+        "$DISPATCH_FILE" > "$_tmpf" 2>/dev/null \
+      && mv "$_tmpf" "$DISPATCH_FILE" 2>/dev/null \
+      || { rm -f "${_tmpf:-}" 2>/dev/null; true; }
     # Restore gc.auto since dispatch is no longer active
     CURRENT_GC=$(git config --get gc.auto 2>/dev/null || echo "default")
     if [ "$CURRENT_GC" = "0" ]; then
@@ -210,7 +280,7 @@ fi
 # Detect teams for terminal-state dispatches and clean up
 for team_dir in "$HOME/.claude/teams/"*-parallel; do
   [ -d "$team_dir" ] || continue
-  TEAM_SPEC=$(basename "$team_dir" | sed 's/-parallel$//')
+  TEAM_SPEC=$(basename "$team_dir" | sed 's/-parallel$//') || continue
   TEAM_SPEC=$(_sanitize_name "$TEAM_SPEC" 2>/dev/null) || continue
   ORPHAN_STATE="$GIT_ROOT/specs/$TEAM_SPEC/.dispatch-state.json"
 

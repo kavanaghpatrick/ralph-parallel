@@ -86,7 +86,9 @@ while IFS= read -r owned; do
     ALLOWED=true
     break
   fi
-done <<< "$OWNED_FILES"
+done <<EOF_OWNED
+${OWNED_FILES}
+EOF_OWNED
 
 if [ "$ALLOWED" = true ]; then
   exit 0
