@@ -258,15 +258,18 @@ case "$(echo "$TASK_FILES" | tr '[:upper:]' '[:lower:]')" in
 esac
 
 if [ -n "$TASK_FILES" ]; then
+  OLDIFS="$IFS"
+  IFS=','
   MISSING=""
-  IFS=',' read -ra FILE_LIST <<< "$TASK_FILES"
-  for f in "${FILE_LIST[@]}"; do
+  for f in $TASK_FILES; do
+    IFS="$OLDIFS"
     f=$(echo "$f" | xargs)  # trim whitespace
     [ -z "$f" ] && continue
     if [ ! -e "$PROJECT_ROOT/$f" ]; then
       MISSING="$MISSING $f"
     fi
   done
+  IFS="$OLDIFS"
   if [ -n "$MISSING" ]; then
     echo "SUPPLEMENTAL CHECK FAILED: file existence" >&2
     echo "Missing files:$MISSING" >&2
