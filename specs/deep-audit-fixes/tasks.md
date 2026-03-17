@@ -218,7 +218,7 @@ Focus: Fix all 3 critical and 5 high-severity findings. Skip tests first, verify
   - **Commit**: `test(idle): add malformed TASK_ID handling test`
   - _Requirements: AC-2.1_
 
-- [ ] 3.3 Run full test suite regression check
+- [x] 3.3 Run full test suite regression check
   - **Do**: Run all 5 test suites to verify all medium fixes maintain backward compatibility. Compare test count to baseline (328).
   - **Done when**: All 328+ tests pass
   - **Verify**: `python3 -m pytest plugins/ralph-parallel/scripts/ -q && bash plugins/ralph-parallel/hooks/scripts/test_gate.sh && bash plugins/ralph-parallel/hooks/scripts/test_teammate_idle_gate.sh && bash plugins/ralph-parallel/scripts/test_session_isolation.sh && bash plugins/ralph-parallel/scripts/test_stop_hook.sh`
@@ -226,7 +226,7 @@ Focus: Fix all 3 critical and 5 high-severity findings. Skip tests first, verify
 
 ## Phase 4: Quality Gates
 
-- [ ] 4.1 Local quality check
+- [x] 4.1 Local quality check
   - **Do**: Run shellcheck on all modified shell scripts. Run Python type checks. Verify no regressions.
   - **Verify**: `command -v shellcheck >/dev/null && shellcheck plugins/ralph-parallel/hooks/scripts/task-completed-gate.sh plugins/ralph-parallel/hooks/scripts/teammate-idle-gate.sh plugins/ralph-parallel/hooks/scripts/session-setup.sh plugins/ralph-parallel/hooks/scripts/dispatch-coordinator.sh plugins/ralph-parallel/hooks/scripts/file-ownership-guard.sh plugins/ralph-parallel/scripts/capture-baseline.sh || echo 'shellcheck not available'`
   - **Done when**: No shellcheck errors (or shellcheck not available), all tests pass
