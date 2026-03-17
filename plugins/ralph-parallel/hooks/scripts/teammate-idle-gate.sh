@@ -136,7 +136,8 @@ while IFS= read -r TASK_ID; do
   # Check if task line has [ ] (uncompleted) vs [x] (completed)
   if grep -qE "^[[:space:]]*- \[ \] ${TASK_ID}\b" "$TASKS_MD"; then
     DESC=$(grep -oE "^[[:space:]]*- \[ \] ${TASK_ID}[[:space:]]+.*" "$TASKS_MD" | sed "s/.*${TASK_ID}[[:space:]]*//" | head -1)
-    UNCOMPLETED="${UNCOMPLETED}  - ${TASK_ID}: ${DESC}\n"
+    UNCOMPLETED="${UNCOMPLETED}  - ${TASK_ID}: ${DESC}
+"
   fi
 done <<< "$GROUP_TASKS"
 
@@ -159,6 +160,6 @@ NEW_COUNT=$((BLOCK_COUNT + 1))
 write_block_counter "$COUNTER_FILE" "$NEW_COUNT" "$STATUS" "$DISPATCHED_AT"
 
 echo "Continue working. You have uncompleted tasks (block $NEW_COUNT/$MAX_IDLE_BLOCKS):" >&2
-printf '%b\n' "$UNCOMPLETED" >&2
+printf '%s' "$UNCOMPLETED" >&2
 echo "Claim the next uncompleted task, implement it, and mark it complete." >&2
 exit 2
