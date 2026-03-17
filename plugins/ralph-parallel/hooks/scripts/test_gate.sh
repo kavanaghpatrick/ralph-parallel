@@ -149,6 +149,56 @@ setup_files_dash() {
 EOF
 }
 
+# ── Sanitizer test setup functions ───────────────────────────
+
+setup_verify_injection_semicolon() {
+  local dir="$1"
+  cat > "$dir/specs/test-spec/tasks.md" <<'EOF'
+- [ ] 1.1 Test task
+  - **Verify**: `true; echo pwned`
+EOF
+}
+
+setup_verify_injection_and() {
+  local dir="$1"
+  cat > "$dir/specs/test-spec/tasks.md" <<'EOF'
+- [ ] 1.1 Test task
+  - **Verify**: `true && echo pwned`
+EOF
+}
+
+setup_verify_injection_or() {
+  local dir="$1"
+  cat > "$dir/specs/test-spec/tasks.md" <<'EOF'
+- [ ] 1.1 Test task
+  - **Verify**: `false || echo pwned`
+EOF
+}
+
+setup_verify_injection_pipe() {
+  local dir="$1"
+  cat > "$dir/specs/test-spec/tasks.md" <<'EOF'
+- [ ] 1.1 Test task
+  - **Verify**: `echo secret | cat`
+EOF
+}
+
+setup_verify_clean_pnpm() {
+  local dir="$1"
+  cat > "$dir/specs/test-spec/tasks.md" <<'EOF'
+- [ ] 1.1 Test task
+  - **Verify**: `true`
+EOF
+}
+
+setup_verify_clean_pytest() {
+  local dir="$1"
+  cat > "$dir/specs/test-spec/tasks.md" <<'EOF'
+- [ ] 1.1 Test task
+  - **Verify**: `true`
+EOF
+}
+
 # ── Run tests ─────────────────────────────────────────────────
 
 run_test "verify output on failure"       2  "QUALITY GATE FAILED"    setup_verify_fail
@@ -161,6 +211,14 @@ run_test "backward compat (no state)"     0  ""                        setup_no_
 run_test "files sentinel: none"           0  ""                        setup_files_none
 run_test "files sentinel: N/A (note)"     0  ""                        setup_files_na_with_note
 run_test "files sentinel: dash"           0  ""                        setup_files_dash
+
+# Sanitizer injection tests (C1)
+run_test "verify rejects semicolon"       2  "REJECTED"               setup_verify_injection_semicolon
+run_test "verify rejects &&"              2  "REJECTED"               setup_verify_injection_and
+run_test "verify rejects ||"              2  "REJECTED"               setup_verify_injection_or
+run_test "verify rejects pipe"            2  "REJECTED"               setup_verify_injection_pipe
+run_test "verify allows clean command"    0  ""                        setup_verify_clean_pnpm
+run_test "verify allows clean pytest"     0  ""                        setup_verify_clean_pytest
 
 # ── Summary ───────────────────────────────────────────────────
 

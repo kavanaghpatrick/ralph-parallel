@@ -202,7 +202,7 @@ Focus: Fix all 3 critical and 5 high-severity findings. Skip tests first, verify
 
 ## Phase 3: Testing
 
-- [ ] 3.1 Add sanitizer tests to test_gate.sh
+- [x] 3.1 Add sanitizer tests to test_gate.sh
   - **Do**: Add test cases to test_gate.sh for C1 (command separator rejection). Test that verify commands containing `;`, `&&`, `||`, `|` are rejected. Test that clean commands like `pnpm test`, `python3 -m pytest` still pass.
   - **Files**: `plugins/ralph-parallel/hooks/scripts/test_gate.sh`
   - **Done when**: At least 4 new test cases for sanitizer (one per separator type)
