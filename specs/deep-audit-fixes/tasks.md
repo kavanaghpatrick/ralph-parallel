@@ -120,7 +120,7 @@ Focus: Fix all 3 critical and 5 high-severity findings. Skip tests first, verify
   - _Requirements: FR-9_
   - _Design: Component D_
 
-- [ ] 1.13 POC Checkpoint -- CRITICAL + HIGH
+- [x] 1.13 POC Checkpoint -- CRITICAL + HIGH
   - **Do**: Run ALL 5 test suites to verify no regressions from CRITICAL and HIGH fixes. All 328 tests must pass.
   - **Done when**: All test suites pass with 0 failures
   - **Verify**: `python3 -m pytest plugins/ralph-parallel/scripts/ -q && bash plugins/ralph-parallel/hooks/scripts/test_gate.sh && bash plugins/ralph-parallel/hooks/scripts/test_teammate_idle_gate.sh && bash plugins/ralph-parallel/scripts/test_session_isolation.sh && bash plugins/ralph-parallel/scripts/test_stop_hook.sh`
