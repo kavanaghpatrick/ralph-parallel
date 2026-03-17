@@ -10,6 +10,7 @@
 #   2 = block idle + send stderr as feedback
 
 set -euo pipefail
+_RALPH_TMP="${TMPDIR:-/tmp}"
 
 _sanitize_name() {
   local name="$1"
@@ -68,9 +69,13 @@ TEAMMATE_NAME=$(echo "$INPUT" | jq -r '.teammate_name // empty' 2>/dev/null) || 
 CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null) || CWD=""
 
 # Not a dispatch team — allow idle
-if [ -z "$TEAM_NAME" ] || [[ "$TEAM_NAME" != *-parallel ]]; then
+if [ -z "$TEAM_NAME" ]; then
   exit 0
 fi
+case "$TEAM_NAME" in
+  *-parallel) ;;
+  *) exit 0 ;;
+esac
 
 SPEC_NAME="${TEAM_NAME%-parallel}"
 SPEC_NAME=$(_sanitize_name "$SPEC_NAME") || exit 0
@@ -89,7 +94,7 @@ DISPATCHED_AT=$(jq -r '.dispatchedAt // "unknown"' "$DISPATCH_STATE" 2>/dev/null
 
 MAX_IDLE_BLOCKS="${RALPH_MAX_IDLE_BLOCKS:-5}"
 TEAMMATE_NAME_SAFE=$(_sanitize_name "$TEAMMATE_NAME" 2>/dev/null) || TEAMMATE_NAME_SAFE="unknown"
-COUNTER_FILE="/tmp/ralph-idle-${SPEC_NAME}-${TEAMMATE_NAME_SAFE}"
+COUNTER_FILE="$_RALPH_TMP/ralph-idle-${SPEC_NAME}-${TEAMMATE_NAME_SAFE}"
 
 # --- completedGroups bypass (authoritative source, checked before tasks.md) ---
 TEAMMATE_GROUP_DONE=$(jq -r --arg name "$TEAMMATE_NAME" \
@@ -146,6 +151,6 @@ NEW_COUNT=$((BLOCK_COUNT + 1))
 write_block_counter "$COUNTER_FILE" "$NEW_COUNT" "$STATUS" "$DISPATCHED_AT"
 
 echo "Continue working. You have uncompleted tasks (block $NEW_COUNT/$MAX_IDLE_BLOCKS):" >&2
-echo -e "$UNCOMPLETED" >&2
+printf '%b\n' "$UNCOMPLETED" >&2
 echo "Claim the next uncompleted task, implement it, and mark it complete." >&2
 exit 2
