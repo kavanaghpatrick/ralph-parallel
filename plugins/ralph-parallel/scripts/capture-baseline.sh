@@ -18,14 +18,17 @@ set -euo pipefail
 
 _sanitize_cmd() {
   local cmd="$1"
+  # Reject null bytes
   if [ "$(printf '%s' "$cmd" | wc -c)" != "$(printf '%s' "$cmd" | tr -d '\0' | wc -c)" ]; then
     echo "ralph-parallel: REJECTED command (null bytes): $cmd" >&2
     return 1
   fi
+  # Reject command substitution attempts
   if printf '%s' "$cmd" | grep -qE '\$\(|`' 2>/dev/null; then
     echo "ralph-parallel: REJECTED command (substitution): $cmd" >&2
     return 1
   fi
+  # Reject path traversal
   if printf '%s' "$cmd" | grep -qF '..' 2>/dev/null; then
     echo "ralph-parallel: REJECTED command (path traversal): $cmd" >&2
     return 1
