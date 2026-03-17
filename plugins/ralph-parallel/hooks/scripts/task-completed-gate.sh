@@ -17,7 +17,7 @@ set -euo pipefail
 _sanitize_cmd() {
   local cmd="$1"
   # Reject null bytes
-  if printf '%s' "$cmd" | grep -qP '\x00' 2>/dev/null; then
+  if [ "$(printf '%s' "$cmd" | wc -c)" != "$(printf '%s' "$cmd" | tr -d '\0' | wc -c)" ]; then
     echo "ralph-parallel: REJECTED command (null bytes): $cmd" >&2
     return 1
   fi
@@ -360,7 +360,8 @@ if [ -n "$TEST_CMD" ]; then
       fi
     else
       # Tests passed — do baseline count comparison
-      TEST_OUTPUT_CLEAN=$(printf '%s' "$TEST_OUTPUT" | sed $'s/\x1b\\[[0-9;]*m//g')
+      ESC=$(printf '\033')
+      TEST_OUTPUT_CLEAN=$(printf '%s' "$TEST_OUTPUT" | sed "s/${ESC}\[[0-9;]*m//g")
 
       if [ "$BASELINE_HARD_FAIL" = "true" ]; then
         echo "ralph-parallel: Tests now PASSING (improved from broken baseline)" >&2
