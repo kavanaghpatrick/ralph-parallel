@@ -155,7 +155,7 @@ Focus: Fix all 3 critical and 5 high-severity findings. Skip tests first, verify
   - _Requirements: FR-12_
   - _Design: Component E_
 
-- [ ] 2.4 Add counter file cleanup on terminal status (M4)
+- [x] 2.4 Add counter file cleanup on terminal status (M4)
   - **Do**: In teammate-idle-gate.sh, when the teammate's group is found in `completedGroups` (line 108-111), add `rm -f "$COUNTER_FILE" 2>/dev/null` before `exit 0` to clean up the block counter file. Also add cleanup when all tasks are complete (line 139-141).
   - **Files**: `plugins/ralph-parallel/hooks/scripts/teammate-idle-gate.sh`
   - **Done when**: Counter file is cleaned up when group is complete or all tasks done

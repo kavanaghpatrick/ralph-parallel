@@ -111,6 +111,7 @@ TEAMMATE_GROUP_DONE=$(jq -r --arg name "$TEAMMATE_NAME" \
 
 if [ "$TEAMMATE_GROUP_DONE" = "true" ]; then
   echo "ralph-parallel: Group '$TEAMMATE_NAME' in completedGroups — allowing idle" >&2
+  rm -f "$COUNTER_FILE" 2>/dev/null
   exit 0
 fi
 
@@ -149,6 +150,7 @@ EOF_TASKS
 
 if [ -z "$UNCOMPLETED" ]; then
   # All group tasks complete in tasks.md — allow idle
+  rm -f "$COUNTER_FILE" 2>/dev/null
   exit 0
 fi
 
