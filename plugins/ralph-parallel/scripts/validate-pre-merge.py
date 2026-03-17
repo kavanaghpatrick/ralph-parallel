@@ -83,14 +83,14 @@ def main():
 
         # Read dispatch-state.json
         try:
-            with open(args.dispatch_state, 'r') as f:
+            with open(args.dispatch_state, 'r', encoding='utf-8') as f:
                 state = json.load(f)
         except json.JSONDecodeError as e:
             print(json.dumps({"error": f"Malformed JSON in dispatch-state: {str(e)}"}))
             sys.exit(1)
 
         # Read tasks.md
-        with open(args.tasks_md, 'r') as f:
+        with open(args.tasks_md, 'r', encoding='utf-8') as f:
             tasks_content = f.read()
 
         checks = {}

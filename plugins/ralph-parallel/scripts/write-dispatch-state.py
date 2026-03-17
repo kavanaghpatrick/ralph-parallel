@@ -24,7 +24,8 @@ def _atomic_write(path: str, data: dict) -> None:
     """Write JSON data atomically using tempfile + os.replace."""
     dir_name = os.path.dirname(os.path.abspath(path))
     with tempfile.NamedTemporaryFile(mode='w', dir=dir_name,
-                                     suffix='.tmp', delete=False) as f:
+                                     suffix='.tmp', delete=False,
+                                     encoding='utf-8') as f:
         json.dump(data, f, indent=2)
         f.write('\n')
         f.flush()
@@ -47,7 +48,7 @@ def check_existing_state(spec_dir: str) -> dict | None:
     if not os.path.exists(state_file):
         return None  # Fresh write, no conflicts
 
-    with open(state_file) as f:
+    with open(state_file, encoding='utf-8') as f:
         existing = json.load(f)
 
     status = existing.get('status', '')
@@ -139,7 +140,7 @@ def main():
             sys.exit(1)
 
         # Read partition
-        with open(args.partition_file) as f:
+        with open(args.partition_file, encoding='utf-8') as f:
             partition = json.load(f)
 
         # Check existing state (may supersede or error)

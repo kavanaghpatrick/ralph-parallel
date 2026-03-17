@@ -164,7 +164,7 @@ Focus: Fix all 3 critical and 5 high-severity findings. Skip tests first, verify
   - _Requirements: FR-13_
   - _Design: Component E_
 
-- [ ] 2.5 Add encoding='utf-8' to Python file operations (M6)
+- [x] 2.5 Add encoding='utf-8' to Python file operations (M6)
   - **Do**: In all production Python files, add `encoding='utf-8'` to `open()` calls that don't have it. Also add to `read_text()` and `write_text()` calls. Files: validate-pre-merge.py (lines 86, 93), write-dispatch-state.py (line 50, 142), build-teammate-prompt.py (line 276), create-task-plan.py (line 116), mark-tasks-complete.py (lines 40, 95, 99, 146), verify-commit-provenance.py (line 169), validate-tasks-format.py (line 386), parse-and-partition.py (lines 68, 96, 117, 134, 1184).
   - **Files**: `plugins/ralph-parallel/scripts/validate-pre-merge.py`, `plugins/ralph-parallel/scripts/write-dispatch-state.py`, `plugins/ralph-parallel/scripts/build-teammate-prompt.py`, `plugins/ralph-parallel/scripts/create-task-plan.py`, `plugins/ralph-parallel/scripts/mark-tasks-complete.py`, `plugins/ralph-parallel/scripts/verify-commit-provenance.py`, `plugins/ralph-parallel/scripts/validate-tasks-format.py`, `plugins/ralph-parallel/scripts/parse-and-partition.py`
   - **Done when**: All `open()` calls in production Python files have `encoding='utf-8'`

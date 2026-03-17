@@ -65,7 +65,7 @@ def _discover_node(root: Path) -> dict:
     """Discover quality commands from package.json."""
     result = {}
     try:
-        pkg = json.loads((root / "package.json").read_text())
+        pkg = json.loads((root / "package.json").read_text(encoding='utf-8'))
         scripts = pkg.get("scripts", {})
         mapping = {
             "typecheck": ["typecheck", "check-types"],
@@ -93,7 +93,7 @@ def _discover_python(root: Path) -> dict:
     if tomllib is None:
         return result
     try:
-        with open(root / "pyproject.toml", "rb") as f:
+        with open(root / "pyproject.toml", "rb") as f:  # binary mode, no encoding needed
             pyproject = tomllib.load(f)
         tool = pyproject.get("tool", {})
         if "pytest" in tool or "pytest.ini_options" in tool.get("pytest", {}):
@@ -114,7 +114,7 @@ def _discover_makefile(root: Path) -> dict:
     """Discover quality commands from Makefile targets."""
     result = {}
     try:
-        makefile = (root / "Makefile").read_text()
+        makefile = (root / "Makefile").read_text(encoding='utf-8')
         target_map = {"test": "test", "build": "build", "lint": "lint", "check": "typecheck", "typecheck": "typecheck"}
         for line in makefile.split('\n'):
             m = re.match(r'^(\w+)\s*:', line)
@@ -131,7 +131,7 @@ def _discover_rust(root: Path) -> dict:
     """Discover quality commands from Cargo.toml."""
     result = {}
     try:
-        (root / "Cargo.toml").read_text()
+        (root / "Cargo.toml").read_text(encoding='utf-8')
         result["build"] = "cargo build"
         result["test"] = "cargo test"
         result["lint"] = "cargo clippy"
@@ -1181,7 +1181,7 @@ def main():
             print(f"Error: tasks.md not found at {tasks_path}", file=sys.stderr)
             sys.exit(1)
 
-        content = tasks_path.read_text()
+        content = tasks_path.read_text(encoding='utf-8')
 
         tasks = parse_tasks(content)
         if not tasks:

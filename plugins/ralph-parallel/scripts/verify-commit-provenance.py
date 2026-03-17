@@ -166,7 +166,7 @@ def main():
 
     # Read dispatch-state.json
     try:
-        with open(args.dispatch_state, 'r') as f:
+        with open(args.dispatch_state, 'r', encoding='utf-8') as f:
             state = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError) as e:
         print(json.dumps({
