@@ -16,6 +16,7 @@ set -uo pipefail
 # Isolate tests from parent environment (e.g., running inside a team dispatch)
 unset CLAUDE_CODE_AGENT_NAME 2>/dev/null || true
 unset CLAUDE_CODE_TEAM_NAME 2>/dev/null || true
+_RALPH_TMP="${TMPDIR:-/tmp}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -81,7 +82,7 @@ cleanup_team_config() {
 
 # Clean up block counter temp files to prevent cross-test contamination
 cleanup_block_counters() {
-  rm -f /tmp/ralph-stop-* 2>/dev/null || true
+  rm -f "$_RALPH_TMP"/ralph-stop-* 2>/dev/null || true
 }
 
 begin_test() {
