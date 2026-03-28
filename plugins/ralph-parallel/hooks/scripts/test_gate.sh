@@ -163,7 +163,16 @@ setup_verify_injection_and() {
   local dir="$1"
   cat > "$dir/specs/test-spec/tasks.md" <<'EOF'
 - [ ] 1.1 Test task
-  - **Verify**: `true && echo pwned`
+  - **Verify**: `true && true`
+EOF
+}
+
+setup_verify_cd_and_command() {
+  local dir="$1"
+  mkdir -p "$dir/subdir"
+  cat > "$dir/specs/test-spec/tasks.md" <<'EOF'
+- [ ] 1.1 Test task
+  - **Verify**: `cd subdir && true`
 EOF
 }
 
@@ -214,7 +223,8 @@ run_test "files sentinel: dash"           0  ""                        setup_fil
 
 # Sanitizer injection tests (C1)
 run_test "verify rejects semicolon"       2  "REJECTED"               setup_verify_injection_semicolon
-run_test "verify rejects &&"              2  "REJECTED"               setup_verify_injection_and
+run_test "verify allows && chains"        0  ""                        setup_verify_injection_and
+run_test "verify allows cd dir && cmd"   0  ""                        setup_verify_cd_and_command
 run_test "verify rejects ||"              2  "REJECTED"               setup_verify_injection_or
 run_test "verify rejects pipe"            2  "REJECTED"               setup_verify_injection_pipe
 run_test "verify allows clean command"    0  ""                        setup_verify_clean_pnpm

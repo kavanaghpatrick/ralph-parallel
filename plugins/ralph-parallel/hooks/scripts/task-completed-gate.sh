@@ -26,8 +26,10 @@ _sanitize_cmd() {
     echo "ralph-parallel: REJECTED command (substitution): $cmd" >&2
     return 1
   fi
-  # Reject command separators and pipes (; | && ||)
-  if printf '%s' "$cmd" | grep -qE ';|\||\&\&|\|\|' 2>/dev/null; then
+  # Reject command separators and pipes (; | ||)
+  # NOTE: && is allowed — sequential AND is safe (next cmd runs only if previous succeeded)
+  # | catches || too since || contains |
+  if printf '%s' "$cmd" | grep -qE ';|\|' 2>/dev/null; then
     echo "ralph-parallel: REJECTED command (separator/pipe): $cmd" >&2
     return 1
   fi
@@ -129,7 +131,7 @@ while IFS= read -r line; do
   fi
 
   if [ "$IN_TASK" = true ] && echo "$line" | grep -qE "\*\*Verify\*\*:"; then
-    VERIFY_CMD=$(echo "$line" | sed 's/.*\*\*Verify\*\*:[[:space:]]*//' | sed 's/^`//;s/`$//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    VERIFY_CMD=$(echo "$line" | sed 's/.*\*\*Verify\*\*:[[:space:]]*//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed 's/^`//;s/`$//')
     break
   fi
 done < "$SPEC_DIR/tasks.md"

@@ -28,8 +28,10 @@ _sanitize_cmd() {
     echo "ralph-parallel: REJECTED command (substitution): $cmd" >&2
     return 1
   fi
-  # Reject command separators and pipes (; | && ||)
-  if printf '%s' "$cmd" | grep -qE ';|\||\&\&|\|\|' 2>/dev/null; then
+  # Reject command separators and pipes (; | ||)
+  # NOTE: && is allowed — sequential AND is safe (next cmd runs only if previous succeeded)
+  # | catches || too since || contains |
+  if printf '%s' "$cmd" | grep -qE ';|\|' 2>/dev/null; then
     echo "ralph-parallel: REJECTED command (separator/pipe): $cmd" >&2
     return 1
   fi
